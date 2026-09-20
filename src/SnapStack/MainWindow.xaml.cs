@@ -6,10 +6,15 @@ namespace SnapStack;
 public sealed partial class MainWindow : Window
 {
     private const int CaptureHotKeyId = 1;
+    private const int PasteHotKeyId = 2;
+
     private const uint VirtualKeyS = 0x53;
+    private const uint VirtualKeyV = 0x56;
 
     private readonly GlobalHotKeyService _hotKeyService;
+
     private bool _captureHotKeyEnabled;
+    private bool _pasteHotKeyEnabled;
 
     public MainWindow()
     {
@@ -25,9 +30,34 @@ public sealed partial class MainWindow : Window
 
     internal bool SetCaptureHotKeyEnabled(bool enabled, out string? error)
     {
+        return SetHotKeyEnabled(
+            CaptureHotKeyId,
+            VirtualKeyS,
+            enabled,
+            ref _captureHotKeyEnabled,
+            out error);
+    }
+
+    internal bool SetPasteHotKeyEnabled(bool enabled, out string? error)
+    {
+        return SetHotKeyEnabled(
+            PasteHotKeyId,
+            VirtualKeyV,
+            enabled,
+            ref _pasteHotKeyEnabled,
+            out error);
+    }
+
+    private bool SetHotKeyEnabled(
+        int id,
+        uint virtualKey,
+        bool enabled,
+        ref bool state,
+        out string? error)
+    {
         error = null;
 
-        if (enabled == _captureHotKeyEnabled)
+        if (enabled == state)
         {
             return true;
         }
@@ -37,18 +67,18 @@ public sealed partial class MainWindow : Window
             if (enabled)
             {
                 _hotKeyService.Register(
-                    CaptureHotKeyId,
+                    id,
                     HotKeyModifiers.Control
                         | HotKeyModifiers.Shift
                         | HotKeyModifiers.NoRepeat,
-                    VirtualKeyS);
+                    virtualKey);
             }
             else
             {
-                _hotKeyService.Unregister(CaptureHotKeyId);
+                _hotKeyService.Unregister(id);
             }
 
-            _captureHotKeyEnabled = enabled;
+            state = enabled;
             return true;
         }
         catch (Exception exception)
@@ -62,9 +92,17 @@ public sealed partial class MainWindow : Window
         object? sender,
         HotKeyPressedEventArgs e)
     {
-        if (e.Id == CaptureHotKeyId)
+        var app = (App)Application.Current;
+
+        switch (e.Id)
         {
-            ((App)Application.Current).RaiseCaptureHotKeyRequested();
+            case CaptureHotKeyId:
+                app.RaiseCaptureHotKeyRequested();
+                break;
+
+            case PasteHotKeyId:
+                app.RaisePasteHotKeyRequested();
+                break;
         }
     }
 

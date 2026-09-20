@@ -35,6 +35,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
                     <TextBlock
@@ -71,11 +72,21 @@
                         Grid.Row="3"
                         Grid.Column="0"
                         FontWeight="SemiBold"
-                        Text="Paste" />
+                        Text="Native paste" />
                     <TextBlock
                         Grid.Row="3"
                         Grid.Column="1"
-                        Text="Ctrl+V once in the target app" />
+                        Text="Ctrl+V once in compatible target apps" />
+
+                    <TextBlock
+                        Grid.Row="4"
+                        Grid.Column="0"
+                        FontWeight="SemiBold"
+                        Text="Fallback paste" />
+                    <TextBlock
+                        Grid.Row="4"
+                        Grid.Column="1"
+                        Text="Ctrl+Shift+V (sequential compatibility mode)" />
                 </Grid>
             </Border>
 
@@ -106,7 +117,7 @@
             <TextBlock
                 x:Name="FeedbackText"
                 Opacity="0.6"
-                Text="Start a session, capture rectangles, then paste the full stack with Ctrl+V."
+                Text="Start a session, capture rectangles, then use Ctrl+V. Use Ctrl+Shift+V only when the target app cannot paste the full stack natively."
                 TextWrapping="Wrap" />
         </StackPanel>
     </Grid>
