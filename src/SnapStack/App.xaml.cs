@@ -91,7 +91,12 @@ public partial class App : Application
         MainWindowInstance?.DispatcherQueue.TryEnqueue(() =>
         {
             EnsureMainWindow();
-            MainWindowInstance?.Activate();
+
+            if (args.Kind != ExtendedActivationKind.Protocol)
+            {
+                MainWindowInstance?.Activate();
+            }
+
             HandleActivation(args);
         });
     }
