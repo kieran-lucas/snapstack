@@ -33,6 +33,7 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
                     <TextBlock
@@ -54,6 +55,16 @@
                         x:Name="CountText"
                         Grid.Row="1"
                         Grid.Column="1" />
+
+                    <TextBlock
+                        Grid.Row="2"
+                        Grid.Column="0"
+                        FontWeight="SemiBold"
+                        Text="Capture hotkey" />
+                    <TextBlock
+                        Grid.Row="2"
+                        Grid.Column="1"
+                        Text="Ctrl+Shift+S (active during a session)" />
                 </Grid>
             </Border>
 
@@ -84,7 +95,7 @@
             <TextBlock
                 x:Name="FeedbackText"
                 Opacity="0.6"
-                Text="Start a session, then capture a window or display."
+                Text="Start a session, then capture rectangles with the button or hotkey."
                 TextWrapping="Wrap" />
         </StackPanel>
     </Grid>

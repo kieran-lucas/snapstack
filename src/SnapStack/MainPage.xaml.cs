@@ -23,26 +23,52 @@ public sealed partial class MainPage : Page
 
     private void MainPage_Loaded(object sender, RoutedEventArgs e)
     {
-        _snippingToolCapture = ((App)Application.Current).SnippingToolCapture;
+        var app = (App)Application.Current;
+
+        _snippingToolCapture = app.SnippingToolCapture;
         _snippingToolCapture.CaptureCompleted += SnippingToolCapture_CaptureCompleted;
+        app.CaptureHotKeyRequested += App_CaptureHotKeyRequested;
     }
 
     private void MainPage_Unloaded(object sender, RoutedEventArgs e)
     {
+        var app = (App)Application.Current;
+
+        app.CaptureHotKeyRequested -= App_CaptureHotKeyRequested;
+
         if (_snippingToolCapture is not null)
         {
             _snippingToolCapture.CaptureCompleted -= SnippingToolCapture_CaptureCompleted;
         }
+
+        app.SetCaptureHotKeyEnabled(false, out _);
     }
 
     private void StartButton_Click(object sender, RoutedEventArgs e)
     {
         _session.Start();
-        FeedbackText.Text = "Session started. Capture a rectangle.";
+
+        var app = (App)Application.Current;
+        var hotKeyReady = app.SetCaptureHotKeyEnabled(true, out var hotKeyError);
+
+        FeedbackText.Text = hotKeyReady
+            ? "Session started. Press Ctrl+Shift+S to capture a rectangle."
+            : $"Session started. Capture button is available; hotkey unavailable: {hotKeyError}";
+
         RenderSession();
     }
 
     private async void CaptureButton_Click(object sender, RoutedEventArgs e)
+    {
+        await BeginRectangleCaptureAsync();
+    }
+
+    private void App_CaptureHotKeyRequested(object? sender, EventArgs e)
+    {
+        _ = BeginRectangleCaptureAsync();
+    }
+
+    private async Task BeginRectangleCaptureAsync()
     {
         if (!_session.IsActive || _snipInProgress || _snippingToolCapture is null)
         {
@@ -89,7 +115,8 @@ public sealed partial class MainPage : Page
                         result.Capture.PixelWidth,
                         result.Capture.PixelHeight);
 
-                    FeedbackText.Text = $"Captured image #{_session.Count}.";
+                    FeedbackText.Text =
+                        $"Captured image #{_session.Count}. Press Ctrl+Shift+S for the next capture.";
                 }
                 else
                 {
@@ -111,15 +138,20 @@ public sealed partial class MainPage : Page
 
     private void StopButton_Click(object sender, RoutedEventArgs e)
     {
+        ((App)Application.Current).SetCaptureHotKeyEnabled(false, out _);
+
         _session.Stop();
         FeedbackText.Text = _session.Count == 0
             ? "Session stopped with no captures."
             : "Session stopped. Captures are ready for the paste pipeline.";
+
         RenderSession();
     }
 
     private void ClearButton_Click(object sender, RoutedEventArgs e)
     {
+        ((App)Application.Current).SetCaptureHotKeyEnabled(false, out _);
+
         _session.Clear();
         FeedbackText.Text = "Session cleared.";
         RenderSession();
