@@ -14,6 +14,16 @@ public enum HotKeyModifiers : uint
     NoRepeat = 0x4000
 }
 
+public sealed class HotKeyPressedEventArgs : EventArgs
+{
+    public int Id { get; }
+
+    public HotKeyPressedEventArgs(int id)
+    {
+        Id = id;
+    }
+}
+
 public sealed class GlobalHotKeyService : IDisposable
 {
     private const uint WmHotKey = 0x0312;
@@ -21,11 +31,11 @@ public sealed class GlobalHotKeyService : IDisposable
 
     private readonly nint _windowHandle;
     private readonly SubclassProc _subclassProc;
+    private readonly HashSet<int> _registeredIds = [];
 
-    private int? _registeredId;
     private bool _disposed;
 
-    public event EventHandler? HotKeyPressed;
+    public event EventHandler<HotKeyPressedEventArgs>? HotKeyPressed;
 
     public GlobalHotKeyService(nint windowHandle)
     {
@@ -49,30 +59,37 @@ public sealed class GlobalHotKeyService : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        if (_registeredId is not null)
+        if (_registeredIds.Contains(id))
         {
-            throw new InvalidOperationException("A SnapStack hotkey is already registered.");
+            throw new InvalidOperationException($"Hotkey id {id} is already registered.");
         }
 
         if (!RegisterHotKey(_windowHandle, id, (uint)modifiers, virtualKey))
         {
             throw new Win32Exception(
                 Marshal.GetLastWin32Error(),
-                "Could not register the SnapStack capture hotkey.");
+                $"Could not register SnapStack hotkey id {id}.");
         }
 
-        _registeredId = id;
+        _registeredIds.Add(id);
     }
 
-    public void Unregister()
+    public void Unregister(int id)
     {
-        if (_registeredId is not int id)
+        if (!_registeredIds.Remove(id))
         {
             return;
         }
 
         UnregisterHotKey(_windowHandle, id);
-        _registeredId = null;
+    }
+
+    public void UnregisterAll()
+    {
+        foreach (var id in _registeredIds.ToArray())
+        {
+            Unregister(id);
+        }
     }
 
     public void Dispose()
@@ -82,7 +99,7 @@ public sealed class GlobalHotKeyService : IDisposable
             return;
         }
 
-        Unregister();
+        UnregisterAll();
         RemoveWindowSubclass(_windowHandle, _subclassProc, SubclassId);
         _disposed = true;
     }
@@ -95,12 +112,15 @@ public sealed class GlobalHotKeyService : IDisposable
         nuint subclassId,
         nint refData)
     {
-        if (message == WmHotKey
-            && _registeredId is int id
-            && wParam == (nuint)id)
+        if (message == WmHotKey)
         {
-            HotKeyPressed?.Invoke(this, EventArgs.Empty);
-            return 0;
+            var id = unchecked((int)wParam);
+
+            if (_registeredIds.Contains(id))
+            {
+                HotKeyPressed?.Invoke(this, new HotKeyPressedEventArgs(id));
+                return 0;
+            }
         }
 
         return DefSubclassProc(hWnd, message, wParam, lParam);

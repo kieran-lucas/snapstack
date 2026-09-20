@@ -45,7 +45,7 @@ public sealed partial class MainWindow : Window
             }
             else
             {
-                _hotKeyService.Unregister();
+                _hotKeyService.Unregister(CaptureHotKeyId);
             }
 
             _captureHotKeyEnabled = enabled;
@@ -58,9 +58,14 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void HotKeyService_HotKeyPressed(object? sender, EventArgs e)
+    private void HotKeyService_HotKeyPressed(
+        object? sender,
+        HotKeyPressedEventArgs e)
     {
-        ((App)Application.Current).RaiseCaptureHotKeyRequested();
+        if (e.Id == CaptureHotKeyId)
+        {
+            ((App)Application.Current).RaiseCaptureHotKeyRequested();
+        }
     }
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
