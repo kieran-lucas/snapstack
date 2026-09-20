@@ -1,4 +1,5 @@
 <Solution>
+  <Project Path="src/SnapStack.Core/SnapStack.Core.csproj" />
   <Project Path="src/SnapStack/SnapStack.csproj" />
   <Project Path="tests/SnapStack.Tests/SnapStack.Tests.csproj" />
 </Solution>

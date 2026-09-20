@@ -22,14 +22,14 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Restore
-        run: dotnet restore tests/SnapStack.Tests/SnapStack.Tests.csproj -p:Platform=x64
+      - name: Restore app
+        run: dotnet restore src/SnapStack/SnapStack.csproj -p:Platform=x64
+
+      - name: Restore tests
+        run: dotnet restore tests/SnapStack.Tests/SnapStack.Tests.csproj
 
       - name: Build app
         run: dotnet build src/SnapStack/SnapStack.csproj --configuration Release -p:Platform=x64 --no-restore
 
-      - name: Build tests
-        run: dotnet build tests/SnapStack.Tests/SnapStack.Tests.csproj --configuration Release -p:Platform=x64 --no-restore
-
       - name: Test
-        run: dotnet test tests/SnapStack.Tests/SnapStack.Tests.csproj --configuration Release -p:Platform=x64 --no-build --no-restore
+        run: dotnet test tests/SnapStack.Tests/SnapStack.Tests.csproj --configuration Release --no-restore

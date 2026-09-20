@@ -3,7 +3,7 @@ using SnapStack.Core;
 
 namespace SnapStack.Clipboard;
 
-internal static class RtfImageStackFormatter
+public static class RtfImageStackFormatter
 {
     private const string HexDigits = "0123456789abcdef";
 
