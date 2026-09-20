@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+    paths:
+      - "src/**"
+      - "SnapStack.slnx"
+      - ".github/workflows/package.yml"
   workflow_dispatch:
 
 permissions:
