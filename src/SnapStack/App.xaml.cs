@@ -25,8 +25,10 @@ public partial class App : Application
         EnsureMainWindow();
         SubscribeToActivation();
 
-        var activation = AppInstance.GetCurrent().GetActivatedEventArgs();
-        HandleActivation(activation);
+        if (Program.InitialActivation is not null)
+        {
+            HandleActivation(Program.InitialActivation);
+        }
     }
 
     internal bool SetCaptureHotKeyEnabled(bool enabled, out string? error)
@@ -58,20 +60,23 @@ public partial class App : Application
 
     private void SubscribeToActivation()
     {
-        if (_activationSubscribed)
+        if (_activationSubscribed || Program.PrimaryInstance is null)
         {
             return;
         }
 
-        AppInstance.GetCurrent().Activated += OnActivated;
+        Program.PrimaryInstance.Activated += OnActivated;
         _activationSubscribed = true;
     }
 
     private void OnActivated(object? sender, AppActivationArguments args)
     {
-        EnsureMainWindow();
-        MainWindowInstance?.Activate();
-        HandleActivation(args);
+        MainWindowInstance?.DispatcherQueue.TryEnqueue(() =>
+        {
+            EnsureMainWindow();
+            MainWindowInstance?.Activate();
+            HandleActivation(args);
+        });
     }
 
     private void HandleActivation(AppActivationArguments args)
