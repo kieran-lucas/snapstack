@@ -65,6 +65,11 @@
                     Click="StartButton_Click"
                     Content="Start session" />
                 <Button
+                    x:Name="CaptureButton"
+                    Click="CaptureButton_Click"
+                    Content="Capture"
+                    IsEnabled="False" />
+                <Button
                     x:Name="StopButton"
                     Click="StopButton_Click"
                     Content="Stop"
@@ -77,8 +82,9 @@
             </StackPanel>
 
             <TextBlock
-                Opacity="0.55"
-                Text="Screen capture will be connected in the next implementation block."
+                x:Name="FeedbackText"
+                Opacity="0.6"
+                Text="Start a session, then capture a window or display."
                 TextWrapping="Wrap" />
         </StackPanel>
     </Grid>
