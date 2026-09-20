@@ -6,25 +6,80 @@
 
     <Grid Padding="32">
         <StackPanel
+            MaxWidth="640"
             HorizontalAlignment="Center"
             VerticalAlignment="Center"
-            Spacing="12">
+            Spacing="20">
+
+            <StackPanel Spacing="6">
+                <TextBlock
+                    FontSize="32"
+                    FontWeight="SemiBold"
+                    Text="SnapStack" />
+                <TextBlock
+                    Opacity="0.7"
+                    Text="Capture multiple screenshots into one session, then paste the entire stack in one action."
+                    TextWrapping="Wrap" />
+            </StackPanel>
+
+            <Border
+                Padding="20"
+                CornerRadius="12">
+                <Grid ColumnSpacing="24" RowSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock
+                        Grid.Row="0"
+                        Grid.Column="0"
+                        FontWeight="SemiBold"
+                        Text="Status" />
+                    <TextBlock
+                        x:Name="StatusText"
+                        Grid.Row="0"
+                        Grid.Column="1" />
+
+                    <TextBlock
+                        Grid.Row="1"
+                        Grid.Column="0"
+                        FontWeight="SemiBold"
+                        Text="Captured" />
+                    <TextBlock
+                        x:Name="CountText"
+                        Grid.Row="1"
+                        Grid.Column="1" />
+                </Grid>
+            </Border>
+
+            <StackPanel
+                Orientation="Horizontal"
+                Spacing="10">
+                <Button
+                    x:Name="StartButton"
+                    Click="StartButton_Click"
+                    Content="Start session" />
+                <Button
+                    x:Name="StopButton"
+                    Click="StopButton_Click"
+                    Content="Stop"
+                    IsEnabled="False" />
+                <Button
+                    x:Name="ClearButton"
+                    Click="ClearButton_Click"
+                    Content="Clear"
+                    IsEnabled="False" />
+            </StackPanel>
+
             <TextBlock
-                HorizontalAlignment="Center"
-                FontSize="32"
-                FontWeight="SemiBold"
-                Text="SnapStack" />
-            <TextBlock
-                MaxWidth="520"
-                HorizontalAlignment="Center"
-                Text="Capture multiple screenshots into one session, then paste the entire stack in one action."
-                TextAlignment="Center"
+                Opacity="0.55"
+                Text="Screen capture will be connected in the next implementation block."
                 TextWrapping="Wrap" />
-            <TextBlock
-                Margin="0,8,0,0"
-                HorizontalAlignment="Center"
-                Opacity="0.65"
-                Text="Capture engine: not initialized" />
         </StackPanel>
     </Grid>
 </Page>
