@@ -23,7 +23,10 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Restore
-        run: dotnet restore src/SnapStack/SnapStack.csproj -p:Platform=x64
+        run: dotnet restore SnapStack.slnx -p:Platform=x64
 
       - name: Build
-        run: dotnet build src/SnapStack/SnapStack.csproj --configuration Release -p:Platform=x64 --no-restore
+        run: dotnet build SnapStack.slnx --configuration Release -p:Platform=x64 --no-restore
+
+      - name: Test
+        run: dotnet test tests/SnapStack.Tests/SnapStack.Tests.csproj --configuration Release -p:Platform=x64 --no-build --no-restore
