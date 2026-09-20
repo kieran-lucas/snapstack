@@ -58,6 +58,7 @@ public sealed class SequentialPasteService
             writer.WriteBytes(capture.PngBytes.ToArray());
             await writer.StoreAsync();
             await writer.FlushAsync();
+            writer.DetachStream();
         }
 
         stream.Seek(0);
@@ -138,7 +139,7 @@ public sealed class SequentialPasteService
             inputs,
             Marshal.SizeOf<INPUT>());
 
-        if (sent != inputs.Length)
+        if (sent != (uint)inputs.Length)
         {
             throw new Win32Exception(
                 Marshal.GetLastWin32Error(),
