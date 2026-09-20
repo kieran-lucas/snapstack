@@ -34,6 +34,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
                     <TextBlock
@@ -65,6 +66,16 @@
                         Grid.Row="2"
                         Grid.Column="1"
                         Text="Ctrl+Shift+S (active during a session)" />
+
+                    <TextBlock
+                        Grid.Row="3"
+                        Grid.Column="0"
+                        FontWeight="SemiBold"
+                        Text="Paste" />
+                    <TextBlock
+                        Grid.Row="3"
+                        Grid.Column="1"
+                        Text="Ctrl+V once in the target app" />
                 </Grid>
             </Border>
 
@@ -95,7 +106,7 @@
             <TextBlock
                 x:Name="FeedbackText"
                 Opacity="0.6"
-                Text="Start a session, then capture rectangles with the button or hotkey."
+                Text="Start a session, capture rectangles, then paste the full stack with Ctrl+V."
                 TextWrapping="Wrap" />
         </StackPanel>
     </Grid>

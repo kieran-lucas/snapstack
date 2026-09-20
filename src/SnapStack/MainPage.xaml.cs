@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SnapStack.Capture;
+using SnapStack.Clipboard;
 using SnapStack.Core;
 
 namespace SnapStack;
@@ -8,8 +9,11 @@ namespace SnapStack;
 public sealed partial class MainPage : Page
 {
     private readonly CaptureSession _session = new();
+    private readonly ClipboardStackService _clipboardStackService = new();
+
     private SnippingToolCaptureService? _snippingToolCapture;
     private bool _snipInProgress;
+    private bool _clipboardPublishInProgress;
 
     public MainPage()
     {
@@ -70,7 +74,10 @@ public sealed partial class MainPage : Page
 
     private async Task BeginRectangleCaptureAsync()
     {
-        if (!_session.IsActive || _snipInProgress || _snippingToolCapture is null)
+        if (!_session.IsActive
+            || _snipInProgress
+            || _clipboardPublishInProgress
+            || _snippingToolCapture is null)
         {
             return;
         }
@@ -102,48 +109,72 @@ public sealed partial class MainPage : Page
         object? sender,
         SnippingCaptureResult result)
     {
-        DispatcherQueue.TryEnqueue(() =>
+        DispatcherQueue.TryEnqueue(
+            () => _ = HandleSnippingCaptureCompletedAsync(result));
+    }
+
+    private async Task HandleSnippingCaptureCompletedAsync(
+        SnippingCaptureResult result)
+    {
+        _snipInProgress = false;
+
+        if (result.Capture is not null)
         {
-            _snipInProgress = false;
-
-            if (result.Capture is not null)
+            if (_session.IsActive)
             {
-                if (_session.IsActive)
-                {
-                    _session.AddCapture(
-                        result.Capture.PngBytes.Span,
-                        result.Capture.PixelWidth,
-                        result.Capture.PixelHeight);
+                _session.AddCapture(
+                    result.Capture.PngBytes.Span,
+                    result.Capture.PixelWidth,
+                    result.Capture.PixelHeight);
 
-                    FeedbackText.Text =
-                        $"Captured image #{_session.Count}. Press Ctrl+Shift+S for the next capture.";
-                }
-                else
-                {
-                    FeedbackText.Text = "Capture received after the session ended.";
-                }
-            }
-            else if (result.IsCancelled)
-            {
-                FeedbackText.Text = "Capture cancelled.";
+                FeedbackText.Text =
+                    $"Captured image #{_session.Count}. Updating clipboard...";
+                RenderSession();
+
+                var clipboardError = await PublishStackToClipboardAsync();
+
+                FeedbackText.Text = clipboardError is null
+                    ? $"Captured image #{_session.Count}. Stack is ready; press Ctrl+V in the target app."
+                    : $"Captured image #{_session.Count}, but clipboard update failed: {clipboardError}";
             }
             else
             {
-                FeedbackText.Text = $"Capture failed: {result.ErrorMessage}";
+                FeedbackText.Text = "Capture received after the session ended.";
             }
+        }
+        else if (result.IsCancelled)
+        {
+            FeedbackText.Text = "Capture cancelled.";
+        }
+        else
+        {
+            FeedbackText.Text = $"Capture failed: {result.ErrorMessage}";
+        }
 
-            RenderSession();
-        });
+        RenderSession();
     }
 
-    private void StopButton_Click(object sender, RoutedEventArgs e)
+    private async void StopButton_Click(object sender, RoutedEventArgs e)
     {
         ((App)Application.Current).SetCaptureHotKeyEnabled(false, out _);
 
         _session.Stop();
-        FeedbackText.Text = _session.Count == 0
-            ? "Session stopped with no captures."
-            : "Session stopped. Captures are ready for the paste pipeline.";
+
+        if (_session.Count == 0)
+        {
+            FeedbackText.Text = "Session stopped with no captures.";
+            RenderSession();
+            return;
+        }
+
+        FeedbackText.Text = "Finalizing clipboard stack...";
+        RenderSession();
+
+        var clipboardError = await PublishStackToClipboardAsync();
+
+        FeedbackText.Text = clipboardError is null
+            ? $"Ready. {_session.Count} image{(_session.Count == 1 ? string.Empty : "s")} will paste with one Ctrl+V."
+            : $"Session stopped, but clipboard update failed: {clipboardError}";
 
         RenderSession();
     }
@@ -157,25 +188,54 @@ public sealed partial class MainPage : Page
         RenderSession();
     }
 
+    private async Task<string?> PublishStackToClipboardAsync()
+    {
+        if (_session.Count == 0)
+        {
+            return null;
+        }
+
+        _clipboardPublishInProgress = true;
+        RenderSession();
+
+        try
+        {
+            await _clipboardStackService.PublishAsync(_session.Captures);
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception.Message;
+        }
+        finally
+        {
+            _clipboardPublishInProgress = false;
+            RenderSession();
+        }
+    }
+
     private void RenderSession()
     {
         StatusText.Text = _session.State switch
         {
             CaptureSessionState.Idle => "Idle",
-            CaptureSessionState.Capturing => _snipInProgress
-                ? "Selecting region"
-                : "Capturing",
+            CaptureSessionState.Capturing when _snipInProgress => "Selecting region",
+            CaptureSessionState.Capturing when _clipboardPublishInProgress => "Updating clipboard",
+            CaptureSessionState.Capturing => "Capturing",
+            CaptureSessionState.Ready when _clipboardPublishInProgress => "Finalizing clipboard",
             CaptureSessionState.Ready => "Ready to paste",
             _ => _session.State.ToString()
         };
 
         CountText.Text = _session.Count.ToString();
 
-        StartButton.IsEnabled = !_session.IsActive && !_snipInProgress;
-        CaptureButton.IsEnabled = _session.IsActive && !_snipInProgress;
-        StopButton.IsEnabled = _session.IsActive && !_snipInProgress;
+        var busy = _snipInProgress || _clipboardPublishInProgress;
+
+        StartButton.IsEnabled = !_session.IsActive && !busy;
+        CaptureButton.IsEnabled = _session.IsActive && !busy;
+        StopButton.IsEnabled = _session.IsActive && !busy;
         ClearButton.IsEnabled =
-            !_snipInProgress
+            !busy
             && (_session.State != CaptureSessionState.Idle || _session.Count > 0);
     }
 }
