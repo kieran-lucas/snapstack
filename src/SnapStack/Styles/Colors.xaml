@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Color x:Key="AppBackgroundColor">#080B14</Color>
+    <Color x:Key="AppSurfaceColor">#101624</Color>
+    <Color x:Key="AppSurfaceRaisedColor">#151D2F</Color>
+    <Color x:Key="AppSurfaceSoftColor">#1A2438</Color>
+    <Color x:Key="AppBorderColor">#29354D</Color>
+
+    <Color x:Key="AppTextPrimaryColor">#F7F8FF</Color>
+    <Color x:Key="AppTextSecondaryColor">#AAB5CB</Color>
+    <Color x:Key="AppTextMutedColor">#72809B</Color>
+
+    <Color x:Key="AppAccentColor">#8B6CFF</Color>
+    <Color x:Key="AppAccentBrightColor">#A992FF</Color>
+    <Color x:Key="AppCyanColor">#54D7FF</Color>
+    <Color x:Key="AppPinkColor">#FF79B8</Color>
+    <Color x:Key="AppSuccessColor">#66E3B4</Color>
+    <Color x:Key="AppWarningColor">#FFC56B</Color>
+    <Color x:Key="AppDangerColor">#FF7F96</Color>
+
+    <SolidColorBrush x:Key="AppBackgroundBrush" Color="{StaticResource AppBackgroundColor}" />
+    <SolidColorBrush x:Key="AppSurfaceBrush" Color="{StaticResource AppSurfaceColor}" />
+    <SolidColorBrush x:Key="AppSurfaceRaisedBrush" Color="{StaticResource AppSurfaceRaisedColor}" />
+    <SolidColorBrush x:Key="AppSurfaceSoftBrush" Color="{StaticResource AppSurfaceSoftColor}" />
+    <SolidColorBrush x:Key="AppBorderBrush" Color="{StaticResource AppBorderColor}" />
+
+    <SolidColorBrush x:Key="AppTextPrimaryBrush" Color="{StaticResource AppTextPrimaryColor}" />
+    <SolidColorBrush x:Key="AppTextSecondaryBrush" Color="{StaticResource AppTextSecondaryColor}" />
+    <SolidColorBrush x:Key="AppTextMutedBrush" Color="{StaticResource AppTextMutedColor}" />
+
+    <SolidColorBrush x:Key="AppAccentBrush" Color="{StaticResource AppAccentColor}" />
+    <SolidColorBrush x:Key="AppAccentBrightBrush" Color="{StaticResource AppAccentBrightColor}" />
+    <SolidColorBrush x:Key="AppCyanBrush" Color="{StaticResource AppCyanColor}" />
+    <SolidColorBrush x:Key="AppPinkBrush" Color="{StaticResource AppPinkColor}" />
+    <SolidColorBrush x:Key="AppSuccessBrush" Color="{StaticResource AppSuccessColor}" />
+    <SolidColorBrush x:Key="AppWarningBrush" Color="{StaticResource AppWarningColor}" />
+    <SolidColorBrush x:Key="AppDangerBrush" Color="{StaticResource AppDangerColor}" />
+
+    <SolidColorBrush x:Key="AppAccentTranslucentBrush" Color="#308B6CFF" />
+    <SolidColorBrush x:Key="AppCyanTranslucentBrush" Color="#2454D7FF" />
+    <SolidColorBrush x:Key="AppPinkTranslucentBrush" Color="#20FF79B8" />
+    <SolidColorBrush x:Key="AppHairlineBrush" Color="#1FFFFFFF" />
+
+    <LinearGradientBrush
+        x:Key="AppHeroGradientBrush"
+        StartPoint="0,0"
+        EndPoint="1,1">
+        <GradientStop Offset="0" Color="#211A3F" />
+        <GradientStop Offset="0.48" Color="#141D36" />
+        <GradientStop Offset="1" Color="#0E2633" />
+    </LinearGradientBrush>
+
+    <LinearGradientBrush
+        x:Key="AppAccentGradientBrush"
+        StartPoint="0,0"
+        EndPoint="1,1">
+        <GradientStop Offset="0" Color="#9A7DFF" />
+        <GradientStop Offset="0.52" Color="#7E73FF" />
+        <GradientStop Offset="1" Color="#53D6FF" />
+    </LinearGradientBrush>
+
+    <LinearGradientBrush
+        x:Key="AppAnimeGlowBrush"
+        StartPoint="0,0"
+        EndPoint="1,1">
+        <GradientStop Offset="0" Color="#38FF79B8" />
+        <GradientStop Offset="0.52" Color="#428B6CFF" />
+        <GradientStop Offset="1" Color="#3054D7FF" />
+    </LinearGradientBrush>
+</ResourceDictionary>
