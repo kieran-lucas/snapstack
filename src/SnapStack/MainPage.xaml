@@ -137,7 +137,6 @@
                                     FontSize="11"
                                     FontWeight="SemiBold"
                                     Foreground="{StaticResource AppAccentBrightBrush}"
-                                    LetterSpacing="90"
                                     Text="CAPTURE FAST. PASTE ONCE." />
                             </Border>
 
@@ -320,7 +319,6 @@
                                 FontSize="9"
                                 FontWeight="SemiBold"
                                 Foreground="{StaticResource AppTextMutedBrush}"
-                                LetterSpacing="130"
                                 Text="NEON CAPTURE" />
                         </Grid>
                     </Grid>
