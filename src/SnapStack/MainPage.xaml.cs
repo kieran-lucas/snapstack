@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using SnapStack.Capture;
 using SnapStack.Clipboard;
 using SnapStack.Core;
@@ -303,11 +304,42 @@ public sealed partial class MainPage : Page
             || _clipboardPublishInProgress
             || _sequentialPasteInProgress;
 
+        ActivityRing.IsActive = busy;
+        ActivityRing.Visibility = busy
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        var statusBrush = _session.State switch
+        {
+            CaptureSessionState.Capturing when _snipInProgress =>
+                GetBrush("AppCyanBrush"),
+            CaptureSessionState.Capturing =>
+                GetBrush("AppSuccessBrush"),
+            CaptureSessionState.Ready =>
+                GetBrush("AppAccentBrightBrush"),
+            _ =>
+                GetBrush("AppTextMutedBrush")
+        };
+
+        StatusDot.Fill = statusBrush;
+        StatusIcon.Foreground = statusBrush;
+
+        FeedbackIcon.Foreground = busy
+            ? GetBrush("AppCyanBrush")
+            : _session.State == CaptureSessionState.Ready
+                ? GetBrush("AppSuccessBrush")
+                : GetBrush("AppAccentBrightBrush");
+
         StartButton.IsEnabled = !_session.IsActive && !busy;
         CaptureButton.IsEnabled = _session.IsActive && !busy;
         StopButton.IsEnabled = _session.IsActive && !busy;
         ClearButton.IsEnabled =
             !busy
             && (_session.State != CaptureSessionState.Idle || _session.Count > 0);
+    }
+
+    private static Brush GetBrush(string resourceKey)
+    {
+        return (Brush)Application.Current.Resources[resourceKey];
     }
 }

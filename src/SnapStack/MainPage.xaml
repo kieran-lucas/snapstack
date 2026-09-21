@@ -185,6 +185,16 @@
                                             Text="Capture" />
                                     </StackPanel>
                                 </Button>
+
+                                <ProgressRing
+                                    x:Name="ActivityRing"
+                                    Width="22"
+                                    Height="22"
+                                    Margin="4,0,0,0"
+                                    VerticalAlignment="Center"
+                                    Foreground="{StaticResource AppCyanBrush}"
+                                    IsActive="False"
+                                    Visibility="Collapsed" />
                             </StackPanel>
                         </StackPanel>
 
@@ -348,18 +358,32 @@
                                     Text="Idle" />
                             </StackPanel>
                             <Border
+                                x:Name="StatusIconBorder"
                                 Grid.Column="1"
                                 Width="40"
                                 Height="40"
                                 Background="{StaticResource AppAccentTranslucentBrush}"
                                 CornerRadius="12">
-                                <FontIcon
-                                    FontFamily="Segoe Fluent Icons"
-                                    FontSize="18"
-                                    Foreground="{StaticResource AppAccentBrightBrush}"
-                                    Glyph="&#xE9D9;"
-                                    HorizontalAlignment="Center"
-                                    VerticalAlignment="Center" />
+                                <Grid>
+                                    <FontIcon
+                                        x:Name="StatusIcon"
+                                        FontFamily="Segoe Fluent Icons"
+                                        FontSize="18"
+                                        Foreground="{StaticResource AppAccentBrightBrush}"
+                                        Glyph="&#xE9D9;"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center" />
+                                    <Ellipse
+                                        x:Name="StatusDot"
+                                        Width="8"
+                                        Height="8"
+                                        Margin="0,0,5,5"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Bottom"
+                                        Fill="{StaticResource AppTextMutedBrush}"
+                                        Stroke="{StaticResource AppSurfaceRaisedBrush}"
+                                        StrokeThickness="2" />
+                                </Grid>
                             </Border>
                         </Grid>
                     </Border>
@@ -521,11 +545,13 @@
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <Border
+                            x:Name="FeedbackBadge"
                             Width="30"
                             Height="30"
                             Background="{StaticResource AppAccentTranslucentBrush}"
                             CornerRadius="9">
                             <FontIcon
+                                x:Name="FeedbackIcon"
                                 FontFamily="Segoe Fluent Icons"
                                 FontSize="14"
                                 Foreground="{StaticResource AppAccentBrightBrush}"
