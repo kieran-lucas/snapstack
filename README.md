@@ -4,15 +4,14 @@ SnapStack is a Windows utility for capturing multiple screenshots into an ordere
 
 ## MVP workflow
 
-1. Launch SnapStack and select **Start session**.
-2. Press **Ctrl+Shift+S** for each screenshot.
+1. Launch SnapStack and press **S** (or select **Start session**).
+2. Press **Ctrl+Z** for each screenshot.
 3. Select a rectangle in the Windows Snipping Tool overlay.
 4. Repeat as many times as needed.
-5. Select **Stop**.
+5. Press **Ctrl+X** (or select **End**).
 6. Switch to the target app and press **Ctrl+V** once.
-7. If that app cannot consume the multi-image clipboard payload, use **Ctrl+Shift+V** for SnapStack's compatibility paste.
 
-SnapStack republishes the full ordered stack to the Windows clipboard after every successful capture and once more when the session stops. Native **Ctrl+V** is the preferred path. The **Ctrl+Shift+V** fallback temporarily publishes each image individually and injects paste commands in order, then restores the full multi-format stack to the clipboard.
+SnapStack republishes the full ordered stack to the Windows clipboard after every successful capture and once more when the session stops. While a completed stack is ready, SnapStack handles **Ctrl+V**, temporarily publishes each image individually, and injects paste commands in capture order. It then restores the full multi-format stack and makes **Ctrl+V** ready for another paste.
 
 ## Current architecture
 
@@ -21,8 +20,8 @@ SnapStack republishes the full ordered stack to the Windows clipboard after ever
 - MSIX package identity
 - Windows Snipping Tool protocol for rectangle capture
 - Windows App SDK single-instance activation routing
-- Win32 `RegisterHotKey` for session-scoped capture and fallback-paste shortcuts
-- Win32 `SendInput` for sequential compatibility paste
+- Win32 `RegisterHotKey` for session-scoped capture, end, and stack-paste shortcuts
+- Win32 `SendInput` for sequential stack paste
 - Multi-format clipboard payload:
   - RTF image stack
   - HTML image stack
@@ -60,6 +59,6 @@ dotnet build src/SnapStack/SnapStack.csproj --configuration Release -p:Platform=
 
 ## Status
 
-MVP integration is in progress. Capture sessions, rectangle capture, global capture hotkey, single-instance callback routing, multi-format clipboard publishing, and a sequential compatibility paste fallback are implemented.
+MVP integration is in progress. Capture sessions, rectangle capture, global capture hotkey, single-instance callback routing, multi-format clipboard publishing, and sequential stack paste through **Ctrl+V** are implemented.
 
 See [docs/MVP_TESTING.md](docs/MVP_TESTING.md) for the end-to-end Windows validation checklist.

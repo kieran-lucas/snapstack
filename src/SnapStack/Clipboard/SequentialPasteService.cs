@@ -8,6 +8,12 @@ namespace SnapStack.Clipboard;
 
 public sealed class SequentialPasteService
 {
+    private static readonly TimeSpan ClipboardReadyDelay =
+        TimeSpan.FromMilliseconds(100);
+
+    private static readonly TimeSpan DestinationPasteDelay =
+        TimeSpan.FromMilliseconds(350);
+
     private const int VkControl = 0x11;
     private const int VkShift = 0x10;
     private const int VkMenu = 0x12;
@@ -29,7 +35,7 @@ public sealed class SequentialPasteService
                 nameof(captures));
         }
 
-        await WaitForModifiersReleasedAsync(cancellationToken);
+        await WaitForShortcutKeysReleasedAsync(cancellationToken);
 
         foreach (var capture in captures.OrderBy(item => item.Sequence))
         {
@@ -39,13 +45,13 @@ public sealed class SequentialPasteService
 
             // Give the destination application time to observe the new
             // clipboard sequence number before injecting Ctrl+V.
-            await Task.Delay(60, cancellationToken);
+            await Task.Delay(ClipboardReadyDelay, cancellationToken);
 
             SendPasteShortcut();
 
             // Rich editors and chat clients often process image pastes
             // asynchronously. Avoid replacing the clipboard too quickly.
-            await Task.Delay(180, cancellationToken);
+            await Task.Delay(DestinationPasteDelay, cancellationToken);
         }
     }
 
@@ -85,34 +91,35 @@ public sealed class SequentialPasteService
                 options))
         {
             throw new InvalidOperationException(
-                "Windows could not set the fallback bitmap clipboard content.");
+                "Windows could not set the image clipboard content.");
         }
 
         Windows.ApplicationModel.DataTransfer.Clipboard.Flush();
     }
 
-    private static async Task WaitForModifiersReleasedAsync(
+    private static async Task WaitForShortcutKeysReleasedAsync(
         CancellationToken cancellationToken)
     {
         var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
 
-        while (AnyModifierPressed())
+        while (AnyShortcutKeyPressed())
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             if (DateTimeOffset.UtcNow >= deadline)
             {
                 throw new TimeoutException(
-                    "Release Ctrl/Shift/Alt/Windows keys before fallback paste.");
+                    "Release Ctrl+V and any other modifier keys before pasting the stack.");
             }
 
             await Task.Delay(10, cancellationToken);
         }
     }
 
-    private static bool AnyModifierPressed()
+    private static bool AnyShortcutKeyPressed()
     {
         return IsKeyPressed(VkControl)
+            || IsKeyPressed(VkV)
             || IsKeyPressed(VkShift)
             || IsKeyPressed(VkMenu)
             || IsKeyPressed(VkLWin)
@@ -143,7 +150,7 @@ public sealed class SequentialPasteService
         {
             throw new Win32Exception(
                 Marshal.GetLastWin32Error(),
-                "Windows could not inject the fallback Ctrl+V shortcut.");
+                "Windows could not inject the Ctrl+V shortcut.");
         }
     }
 
@@ -175,8 +182,29 @@ public sealed class SequentialPasteService
     [StructLayout(LayoutKind.Explicit)]
     private struct InputUnion
     {
+        // INPUT's native union is sized by MOUSEINPUT (32 bytes on 64-bit
+        // Windows). Keeping every union member here is required even though
+        // SnapStack only sends keyboard input; otherwise Marshal.SizeOf<INPUT>
+        // is 32 instead of the required 40 and SendInput rejects the call.
+        [FieldOffset(0)]
+        public MOUSEINPUT Mouse;
+
         [FieldOffset(0)]
         public KEYBDINPUT Keyboard;
+
+        [FieldOffset(0)]
+        public HARDWAREINPUT Hardware;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MOUSEINPUT
+    {
+        public int X;
+        public int Y;
+        public uint MouseData;
+        public uint Flags;
+        public uint Time;
+        public nuint ExtraInfo;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -187,6 +215,14 @@ public sealed class SequentialPasteService
         public uint Flags;
         public uint Time;
         public nuint ExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct HARDWAREINPUT
+    {
+        public uint Message;
+        public ushort ParameterLow;
+        public ushort ParameterHigh;
     }
 
     [DllImport("user32.dll")]

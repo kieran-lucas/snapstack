@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using SnapStack.Capture;
 using SnapStack.Clipboard;
@@ -16,7 +17,7 @@ public sealed partial class MainPage : Page
     private SnippingToolCaptureService? _snippingToolCapture;
     private bool _snipInProgress;
     private bool _clipboardPublishInProgress;
-    private bool _sequentialPasteInProgress;
+    private bool _stackPasteInProgress;
 
     public MainPage()
     {
@@ -35,6 +36,7 @@ public sealed partial class MainPage : Page
         _snippingToolCapture = app.SnippingToolCapture;
         _snippingToolCapture.CaptureCompleted += SnippingToolCapture_CaptureCompleted;
         app.CaptureHotKeyRequested += App_CaptureHotKeyRequested;
+        app.EndHotKeyRequested += App_EndHotKeyRequested;
         app.PasteHotKeyRequested += App_PasteHotKeyRequested;
     }
 
@@ -43,6 +45,7 @@ public sealed partial class MainPage : Page
         var app = (App)Application.Current;
 
         app.CaptureHotKeyRequested -= App_CaptureHotKeyRequested;
+        app.EndHotKeyRequested -= App_EndHotKeyRequested;
         app.PasteHotKeyRequested -= App_PasteHotKeyRequested;
 
         if (_snippingToolCapture is not null)
@@ -51,21 +54,41 @@ public sealed partial class MainPage : Page
         }
 
         app.SetCaptureHotKeyEnabled(false, out _);
+        app.SetEndHotKeyEnabled(false, out _);
         app.SetPasteHotKeyEnabled(false, out _);
     }
 
     private void StartButton_Click(object sender, RoutedEventArgs e)
+    {
+        StartSession();
+    }
+
+    private void StartKeyboardAccelerator_Invoked(
+        KeyboardAccelerator sender,
+        KeyboardAcceleratorInvokedEventArgs args)
+    {
+        if (StartButton.IsEnabled)
+        {
+            StartSession();
+            args.Handled = true;
+        }
+    }
+
+    private void StartSession()
     {
         _session.Start();
 
         var app = (App)Application.Current;
         app.SetPasteHotKeyEnabled(false, out _);
 
-        var hotKeyReady = app.SetCaptureHotKeyEnabled(true, out var hotKeyError);
+        var captureHotKeyReady =
+            app.SetCaptureHotKeyEnabled(true, out var captureHotKeyError);
+        var endHotKeyReady =
+            app.SetEndHotKeyEnabled(true, out var endHotKeyError);
 
-        FeedbackText.Text = hotKeyReady
-            ? "Session started. Press Ctrl+Shift+S to capture a rectangle."
-            : $"Session started. Capture button is available; hotkey unavailable: {hotKeyError}";
+        FeedbackText.Text = captureHotKeyReady && endHotKeyReady
+            ? "Session started. Ctrl+Z captures; Ctrl+X ends the session."
+            : $"Session started. Shortcut issue: {captureHotKeyError ?? endHotKeyError}";
 
         RenderSession();
     }
@@ -80,9 +103,14 @@ public sealed partial class MainPage : Page
         _ = BeginRectangleCaptureAsync();
     }
 
+    private void App_EndHotKeyRequested(object? sender, EventArgs e)
+    {
+        _ = StopSessionAsync();
+    }
+
     private void App_PasteHotKeyRequested(object? sender, EventArgs e)
     {
-        _ = PasteStackFallbackAsync();
+        _ = PasteStackAsync();
     }
 
     private async Task BeginRectangleCaptureAsync()
@@ -90,7 +118,7 @@ public sealed partial class MainPage : Page
         if (!_session.IsActive
             || _snipInProgress
             || _clipboardPublishInProgress
-            || _sequentialPasteInProgress
+            || _stackPasteInProgress
             || _snippingToolCapture is null)
         {
             return;
@@ -146,14 +174,9 @@ public sealed partial class MainPage : Page
                 RenderSession();
 
                 var clipboardError = await PublishStackToClipboardAsync();
-                var app = (App)Application.Current;
-                var fallbackReady =
-                    app.SetPasteHotKeyEnabled(true, out var fallbackHotKeyError);
 
                 FeedbackText.Text = clipboardError is null
-                    ? fallbackReady
-                        ? $"Captured image #{_session.Count}. Ctrl+V is ready; Ctrl+Shift+V is the compatibility fallback."
-                        : $"Captured image #{_session.Count}. Ctrl+V is ready; fallback hotkey unavailable: {fallbackHotKeyError}"
+                    ? $"Captured image #{_session.Count}. Press Ctrl+Z for another, or Ctrl+X to finish."
                     : $"Captured image #{_session.Count}, but clipboard update failed: {clipboardError}";
             }
             else
@@ -175,13 +198,28 @@ public sealed partial class MainPage : Page
 
     private async void StopButton_Click(object sender, RoutedEventArgs e)
     {
-        ((App)Application.Current).SetCaptureHotKeyEnabled(false, out _);
+        await StopSessionAsync();
+    }
+
+    private async Task StopSessionAsync()
+    {
+        if (!_session.IsActive
+            || _snipInProgress
+            || _clipboardPublishInProgress
+            || _stackPasteInProgress)
+        {
+            return;
+        }
+
+        var app = (App)Application.Current;
+        app.SetCaptureHotKeyEnabled(false, out _);
+        app.SetEndHotKeyEnabled(false, out _);
 
         _session.Stop();
 
         if (_session.Count == 0)
         {
-            ((App)Application.Current).SetPasteHotKeyEnabled(false, out _);
+            app.SetPasteHotKeyEnabled(false, out _);
             FeedbackText.Text = "Session stopped with no captures.";
             RenderSession();
             return;
@@ -191,15 +229,15 @@ public sealed partial class MainPage : Page
         RenderSession();
 
         var clipboardError = await PublishStackToClipboardAsync();
-        var fallbackReady =
-            ((App)Application.Current).SetPasteHotKeyEnabled(
+        var pasteHotKeyReady =
+            app.SetPasteHotKeyEnabled(
                 true,
-                out var fallbackHotKeyError);
+                out var pasteHotKeyError);
 
         FeedbackText.Text = clipboardError is null
-            ? fallbackReady
-                ? $"Ready. {_session.Count} image{(_session.Count == 1 ? string.Empty : "s")}: Ctrl+V first, Ctrl+Shift+V if needed."
-                : $"Ready for Ctrl+V; fallback hotkey unavailable: {fallbackHotKeyError}"
+            ? pasteHotKeyReady
+                ? $"Ready. Press Ctrl+V once to paste all {_session.Count} image{(_session.Count == 1 ? string.Empty : "s")} in order."
+                : $"Stack is ready, but Ctrl+V could not be registered: {pasteHotKeyError}"
             : $"Session stopped, but clipboard update failed: {clipboardError}";
 
         RenderSession();
@@ -209,6 +247,7 @@ public sealed partial class MainPage : Page
     {
         var app = (App)Application.Current;
         app.SetCaptureHotKeyEnabled(false, out _);
+        app.SetEndHotKeyEnabled(false, out _);
         app.SetPasteHotKeyEnabled(false, out _);
 
         _session.Clear();
@@ -216,19 +255,30 @@ public sealed partial class MainPage : Page
         RenderSession();
     }
 
-    private async Task PasteStackFallbackAsync()
+    private async Task PasteStackAsync()
     {
-        if (_session.Count == 0
+        var app = (App)Application.Current;
+
+        if (_session.State != CaptureSessionState.Ready
+            || _session.Count == 0
             || _snipInProgress
             || _clipboardPublishInProgress
-            || _sequentialPasteInProgress)
+            || _stackPasteInProgress)
         {
+            // MainWindow releases the Ctrl+V registration before dispatching
+            // this request. Restore it if the request cannot run.
+            if (_session.State == CaptureSessionState.Ready
+                && _session.Count > 0)
+            {
+                app.SetPasteHotKeyEnabled(true, out _);
+            }
+
             return;
         }
 
-        _sequentialPasteInProgress = true;
+        _stackPasteInProgress = true;
         FeedbackText.Text =
-            $"Compatibility paste: sending {_session.Count} image{(_session.Count == 1 ? string.Empty : "s")}...";
+            $"Pasting {_session.Count} image{(_session.Count == 1 ? string.Empty : "s")} in order...";
         RenderSession();
 
         string? pasteError = null;
@@ -242,17 +292,22 @@ public sealed partial class MainPage : Page
             pasteError = exception.Message;
         }
 
-        // Sequential fallback temporarily replaces the clipboard with each
-        // individual image. Restore the preferred multi-format stack after it.
+        // Sequential paste temporarily replaces the clipboard with each image.
+        // Restore the full multi-format stack so it remains available later.
         var restoreError = await PublishStackToClipboardAsync();
 
-        _sequentialPasteInProgress = false;
+        _stackPasteInProgress = false;
+
+        var pasteHotKeyReady =
+            app.SetPasteHotKeyEnabled(true, out var pasteHotKeyError);
 
         FeedbackText.Text = pasteError is not null
-            ? $"Compatibility paste failed: {pasteError}"
+            ? $"Stack paste failed: {pasteError}"
             : restoreError is not null
                 ? $"Images were pasted, but restoring the full clipboard stack failed: {restoreError}"
-                : $"Compatibility paste sent {_session.Count} image{(_session.Count == 1 ? string.Empty : "s")}. Full stack restored to clipboard.";
+                : !pasteHotKeyReady
+                    ? $"Images were pasted, but Ctrl+V could not be re-registered: {pasteHotKeyError}"
+                    : $"Pasted {_session.Count} image{(_session.Count == 1 ? string.Empty : "s")} in order. Ctrl+V is ready to paste the stack again.";
 
         RenderSession();
     }
@@ -288,7 +343,7 @@ public sealed partial class MainPage : Page
         StatusText.Text = _session.State switch
         {
             CaptureSessionState.Idle => "Idle",
-            _ when _sequentialPasteInProgress => "Compatibility paste",
+            _ when _stackPasteInProgress => "Pasting stack",
             CaptureSessionState.Capturing when _snipInProgress => "Selecting region",
             CaptureSessionState.Capturing when _clipboardPublishInProgress => "Updating clipboard",
             CaptureSessionState.Capturing => "Capturing",
@@ -302,7 +357,7 @@ public sealed partial class MainPage : Page
         var busy =
             _snipInProgress
             || _clipboardPublishInProgress
-            || _sequentialPasteInProgress;
+            || _stackPasteInProgress;
 
         ActivityRing.IsActive = busy;
         ActivityRing.Visibility = busy

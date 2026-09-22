@@ -40,3 +40,7 @@ Desktop.ini
 .env
 .env.*
 !.env.example
+*.pfx
+
+# Generated Windows app packages
+src/SnapStack/AppPackages/

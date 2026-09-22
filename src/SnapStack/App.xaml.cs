@@ -14,6 +14,7 @@ public partial class App : Application
     public SnippingToolCaptureService SnippingToolCapture { get; } = new();
 
     public event EventHandler? CaptureHotKeyRequested;
+    public event EventHandler? EndHotKeyRequested;
     public event EventHandler? PasteHotKeyRequested;
 
     public App()
@@ -54,9 +55,25 @@ public partial class App : Application
         return window.SetPasteHotKeyEnabled(enabled, out error);
     }
 
+    internal bool SetEndHotKeyEnabled(bool enabled, out string? error)
+    {
+        if (MainWindowInstance is not MainWindow window)
+        {
+            error = "The main window is not available.";
+            return false;
+        }
+
+        return window.SetEndHotKeyEnabled(enabled, out error);
+    }
+
     internal void RaiseCaptureHotKeyRequested()
     {
         CaptureHotKeyRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    internal void RaiseEndHotKeyRequested()
+    {
+        EndHotKeyRequested?.Invoke(this, EventArgs.Empty);
     }
 
     internal void RaisePasteHotKeyRequested()

@@ -5,6 +5,7 @@
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RootNamespace>SnapStack</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\SnapStack.ico</ApplicationIcon>
     <Platforms>x64;ARM64</Platforms>
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString().ToLowerInvariant())</RuntimeIdentifier>
     <UseWinUI>true</UseWinUI>
@@ -20,10 +21,13 @@
 
   <ItemGroup>
     <Content Include="Assets\SplashScreen.png" />
+    <Content Include="Assets\SnapStackLogo.png" />
     <Content Include="Assets\Square150x150Logo.png" />
     <Content Include="Assets\Square44x44Logo.png" />
     <Content Include="Assets\StoreLogo.png" />
     <Content Include="Assets\Wide310x150Logo.png" />
+    <Content Include="Assets\Fonts\Lexend-VariableFont_wght.ttf" />
+    <Content Include="Assets\Fonts\OFL.txt" />
   </ItemGroup>
 
   <ItemGroup>
