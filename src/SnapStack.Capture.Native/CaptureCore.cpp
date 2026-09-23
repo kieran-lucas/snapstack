@@ -121,6 +121,8 @@ public:
     ~WarmEngine() {
         if (inputWindow_) PostMessageW(inputWindow_, WM_CLOSE, 0, 0);
         if (overlayThread_.joinable()) overlayThread_.join();
+        if (selectionPen_) DeleteObject(selectionPen_);
+        if (dimBrush_) DeleteObject(dimBrush_);
         if (selectionEvent_) CloseHandle(selectionEvent_);
         if (overlayReadyEvent_) CloseHandle(overlayReadyEvent_);
         stop_ = true;
@@ -341,20 +343,25 @@ private:
         if (message == WM_PAINT) {
             PAINTSTRUCT ps{};
             const auto dc = BeginPaint(hwnd, &ps);
-            FillRect(dc, &ps.rcPaint, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
             auto* engine = reinterpret_cast<WarmEngine*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+            if (engine && engine->dimBrush_) {
+                FillRect(dc, &ps.rcPaint, engine->dimBrush_);
+            }
             if (engine && engine->dragging_) {
-                const auto pen = CreatePen(PS_SOLID, 3, RGB(32, 220, 240));
-                const auto previousPen = SelectObject(dc, pen);
-                const auto previousBrush = SelectObject(dc, GetStockObject(HOLLOW_BRUSH));
-                Rectangle(dc,
+                const RECT selected{
                     std::min(engine->dragStart_.x, engine->dragEnd_.x),
                     std::min(engine->dragStart_.y, engine->dragEnd_.y),
                     std::max(engine->dragStart_.x, engine->dragEnd_.x),
-                    std::max(engine->dragStart_.y, engine->dragEnd_.y));
+                    std::max(engine->dragStart_.y, engine->dragEnd_.y)};
+                // Black is the layer's color key. The selected pixels are
+                // fully transparent while everything around them is dimmed.
+                FillRect(dc, &selected, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+                const auto previousPen = SelectObject(dc, engine->selectionPen_);
+                const auto previousBrush = SelectObject(dc, GetStockObject(HOLLOW_BRUSH));
+                Rectangle(dc,
+                    selected.left, selected.top, selected.right, selected.bottom);
                 SelectObject(dc, previousBrush);
                 SelectObject(dc, previousPen);
-                DeleteObject(pen);
             }
             EndPaint(hwnd, &ps);
             return 0;
@@ -386,12 +393,21 @@ private:
             bounds_.left, bounds_.top, width, height,
             nullptr, nullptr, instance, this);
         if (inputWindow_ && borderWindow_ &&
-            SetLayeredWindowAttributes(inputWindow_, 0, 64, LWA_ALPHA) &&
-            SetLayeredWindowAttributes(borderWindow_, RGB(0, 0, 0), 0, LWA_COLORKEY)) {
+            (dimBrush_ = CreateSolidBrush(RGB(4, 12, 24))) &&
+            (selectionPen_ = CreatePen(PS_SOLID, 3, RGB(64, 139, 255))) &&
+            SetLayeredWindowAttributes(inputWindow_, 0, 1, LWA_ALPHA) &&
+            SetLayeredWindowAttributes(borderWindow_, RGB(0, 0, 0), 150,
+                LWA_COLORKEY | LWA_ALPHA)) {
             // Exclusion is a secondary safeguard; the pinned frame predates
-            // both overlay windows becoming visible.
-            SetWindowDisplayAffinity(inputWindow_, WDA_EXCLUDEFROMCAPTURE);
-            SetWindowDisplayAffinity(borderWindow_, WDA_EXCLUDEFROMCAPTURE);
+            // both overlay windows becoming visible. The visual-check switch
+            // is for the benchmark harness to photograph the overlay only.
+            wchar_t visualCheck[2]{};
+            const auto visualCheckLength = GetEnvironmentVariableW(
+                L"SNAPSTACK_CAPTURE_VISUAL_CHECK", visualCheck, 2);
+            if (visualCheckLength != 1 || visualCheck[0] != L'1') {
+                SetWindowDisplayAffinity(inputWindow_, WDA_EXCLUDEFROMCAPTURE);
+                SetWindowDisplayAffinity(borderWindow_, WDA_EXCLUDEFROMCAPTURE);
+            }
             overlayStatus_ = S_OK;
         } else {
             overlayStatus_ = HRESULT_FROM_WIN32(GetLastError());
@@ -530,6 +546,8 @@ private:
     HWND inputWindow_ = nullptr;
     HWND borderWindow_ = nullptr;
     HWND previousForeground_ = nullptr;
+    HBRUSH dimBrush_ = nullptr;
+    HPEN selectionPen_ = nullptr;
     HRESULT overlayStatus_ = E_FAIL;
     SnapCoreSelection selection_{1, 1, 0, 0, 0, 0, 0, 0};
     POINT dragStart_{};

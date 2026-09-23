@@ -2,7 +2,8 @@ param(
     [switch]$PauseWorker,
     [switch]$VerifyFrozen,
     [switch]$NativeCore,
-    [switch]$FlushHide
+    [switch]$FlushHide,
+    [switch]$SaveVisualSample
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,12 +42,16 @@ $argument = if ($NativeCore) {
 } elseif ($VerifyFrozen) { '--overlay-verify' } elseif ($PauseWorker) { '--overlay-pause' } else { '--overlay' }
 $windowClass = if ($NativeCore) { 'SnapStackNativeCaptureInput' } else { 'SnapStackOverlayBenchInput' }
 $previousFlush = $env:SNAPSTACK_CAPTURE_FLUSH_HIDE
+$previousVisualCheck = $env:SNAPSTACK_CAPTURE_VISUAL_CHECK
 if ($FlushHide) { $env:SNAPSTACK_CAPTURE_FLUSH_HIDE = '1' }
 else { Remove-Item Env:SNAPSTACK_CAPTURE_FLUSH_HIDE -ErrorAction SilentlyContinue }
+if ($SaveVisualSample) { $env:SNAPSTACK_CAPTURE_VISUAL_CHECK = '1' }
 $process = Start-Process -FilePath $executable -ArgumentList $argument `
     -WindowStyle Hidden -PassThru -RedirectStandardOutput $output -RedirectStandardError $errors
 if ($null -eq $previousFlush) { Remove-Item Env:SNAPSTACK_CAPTURE_FLUSH_HIDE -ErrorAction SilentlyContinue }
 else { $env:SNAPSTACK_CAPTURE_FLUSH_HIDE = $previousFlush }
+if ($null -eq $previousVisualCheck) { Remove-Item Env:SNAPSTACK_CAPTURE_VISUAL_CHECK -ErrorAction SilentlyContinue }
+else { $env:SNAPSTACK_CAPTURE_VISUAL_CHECK = $previousVisualCheck }
 
 try {
     for ($index = 1; $index -le 20; $index++) {
@@ -77,6 +82,20 @@ try {
             [SnapStackOverlayBenchmarkInput]::SetCursorPos(
                 (600 + $step * 80), (400 + $step * 50)) | Out-Null
             Start-Sleep -Milliseconds 10
+            if ($SaveVisualSample -and $index -eq 1 -and $step -eq 5) {
+                Add-Type -AssemblyName System.Drawing
+                $sample = [System.Drawing.Bitmap]::new(1100, 850)
+                $graphics = [System.Drawing.Graphics]::FromImage($sample)
+                try {
+                    $graphics.CopyFromScreen(400, 300, 0, 0,
+                        [System.Drawing.Size]::new(1100, 850))
+                    $sample.Save((Join-Path $artifactDirectory 'overlay-visual-sample.png'))
+                }
+                finally {
+                    $graphics.Dispose()
+                    $sample.Dispose()
+                }
+            }
         }
         [SnapStackOverlayBenchmarkInput]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
 
