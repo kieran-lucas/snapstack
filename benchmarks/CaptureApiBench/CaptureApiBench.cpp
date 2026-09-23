@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <memory>
 #include <numeric>
 #include <stdexcept>
 #include <string>
@@ -139,6 +140,45 @@ struct Stimulus {
     void update() const {
         InvalidateRect(hwnd, nullptr, FALSE);
         UpdateWindow(hwnd);
+    }
+};
+
+std::atomic<COLORREF> markerColor{RGB(17, 203, 51)};
+
+LRESULT CALLBACK markerProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (message == WM_PAINT) {
+        PAINTSTRUCT ps{};
+        const auto dc = BeginPaint(hwnd, &ps);
+        const auto brush = CreateSolidBrush(markerColor.load());
+        FillRect(dc, &ps.rcPaint, brush);
+        DeleteObject(brush);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, message, wparam, lparam);
+}
+
+struct Marker {
+    HWND hwnd{};
+    explicit Marker(RECT monitor) {
+        WNDCLASSW klass{};
+        klass.lpfnWndProc = markerProc;
+        klass.hInstance = GetModuleHandleW(nullptr);
+        klass.lpszClassName = L"SnapStackFrozenFrameMarker";
+        RegisterClassW(&klass);
+        hwnd = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+            klass.lpszClassName, L"", WS_POPUP | WS_VISIBLE,
+            monitor.left + 650, monitor.top + 450, 16, 16,
+            nullptr, nullptr, klass.hInstance, nullptr);
+        if (!hwnd) throw std::runtime_error("Could not create frozen-frame marker");
+        set(RGB(17, 203, 51));
+    }
+    ~Marker() { if (hwnd) DestroyWindow(hwnd); }
+    void set(COLORREF color) const {
+        markerColor = color;
+        InvalidateRect(hwnd, nullptr, FALSE);
+        UpdateWindow(hwnd);
+        DwmFlush();
     }
 };
 
@@ -663,20 +703,29 @@ private:
     HWND previousForeground_{};
 };
 
-void benchmarkOverlay(Graphics& graphics, Stimulus& stimulus, bool pauseWorker) {
-    printf("Interactive overlay contender: 20 selections, exactly %ux%u pixels each; worker %s.\n",
-        kCropWidth, kCropHeight, pauseWorker ? "paused during selection" : "continuous");
+void benchmarkOverlay(Graphics& graphics, Stimulus& stimulus,
+    bool pauseWorker, bool verifyFrozen) {
+    printf("Interactive overlay contender: 20 selections, exactly %ux%u pixels each; worker %s; frozen-pixel check %s.\n",
+        kCropWidth, kCropHeight, pauseWorker ? "paused during selection" : "continuous",
+        verifyFrozen ? "on" : "off");
     WarmDuplication frames(graphics, pauseWorker);
     Overlay overlay(graphics.bounds);
     Cropper cropper(graphics, kCropWidth, kCropHeight);
+    std::unique_ptr<Marker> marker;
+    if (verifyFrozen) marker = std::make_unique<Marker>(graphics.bounds);
     stimulus.update();
     std::vector<double> showMs, releaseToPixelsMs, frameAgeMs;
     for (unsigned i = 0; i < 20; ++i) {
+        if (marker) {
+            marker->set(RGB(17, 203, 51));
+            Sleep(50); // Allow the worker to copy the composited green marker.
+        }
         const auto triggered = stamp();
         frames.pin();
         frameAgeMs.push_back(frames.pinnedAgeMs());
         const auto shown = overlay.show();
         showMs.push_back(milliseconds(triggered, shown));
+        if (marker) marker->set(RGB(203, 17, 187));
         if (!overlay.waitForSelection()) {
             frames.unpin();
             printf("Selection %u cancelled or timed out\n", i + 1);
@@ -693,6 +742,21 @@ void benchmarkOverlay(Graphics& graphics, Stimulus& stimulus, bool pauseWorker) 
         }
         Sample sample;
         frames.cropPinned(cropper, selection.left, selection.top, sample);
+        if (marker) {
+            const size_t pixel = (58u * kCropWidth + 58u) * 4u;
+            const auto blue = cropper.pixels[pixel];
+            const auto green = cropper.pixels[pixel + 1];
+            const auto red = cropper.pixels[pixel + 2];
+            if (std::abs(static_cast<int>(blue) - 51) > 8 ||
+                std::abs(static_cast<int>(green) - 203) > 8 ||
+                std::abs(static_cast<int>(red) - 17) > 8) {
+                frames.unpin();
+                char error[160];
+                sprintf_s(error, "Frozen-frame pixel mismatch at selection %u: BGR=%u,%u,%u",
+                    i + 1, blue, green, red);
+                throw std::runtime_error(error);
+            }
+        }
         frames.unpin();
         releaseToPixelsMs.push_back(milliseconds(overlay.released(), stamp()));
         printf("Selection %u/20: release->pixels %.3f ms, crop issue %.3f ms, readback %.3f ms\n",
@@ -719,8 +783,12 @@ int main(int argc, char** argv) {
         printf("Reported display refresh: %lu Hz\n", graphics.refreshHz);
         Stimulus stimulus(graphics.bounds);
         if (argc > 1 &&
-            (strcmp(argv[1], "--overlay") == 0 || strcmp(argv[1], "--overlay-pause") == 0)) {
-            benchmarkOverlay(graphics, stimulus, strcmp(argv[1], "--overlay-pause") == 0);
+            (strcmp(argv[1], "--overlay") == 0 ||
+             strcmp(argv[1], "--overlay-pause") == 0 ||
+             strcmp(argv[1], "--overlay-verify") == 0)) {
+            const bool pause = strcmp(argv[1], "--overlay") != 0;
+            const bool verify = strcmp(argv[1], "--overlay-verify") == 0;
+            benchmarkOverlay(graphics, stimulus, pause, verify);
             return 0;
         }
         benchmarkGdi(graphics, stimulus);

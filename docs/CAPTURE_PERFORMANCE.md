@@ -73,6 +73,10 @@ This is an experimental native benchmark, **not** the full application path. It 
 
 The pinned-texture design was A/B tested with the live DXGI worker either continuing to copy desktop frames or waiting until the selection releases its pin. Two 20-selection runs were made for each mode using the same 800 × 500 geometry. Mouse-release → BGRA-pixels median / p95: continuous **7.66 / 17.15 ms** and **5.85 / 24.80 ms**; paused **6.36 / 9.97 ms** and **5.60 / 10.09 ms**. Overlay-presentation medians stayed near 13 ms in both modes. The median advantage is not robust across runs, but the tail improvement is consistent, so the candidate engine should pause the frame worker during selection. The next-capture path must ensure a fresh non-overlay frame after resuming, particularly under rapid repeated captures.
 
+### Frozen-frame pixel check
+
+A separate 20-selection run placed a green 16 × 16 Win32 marker inside the selected region before frame pinning, changed the live marker to magenta after the overlay appeared, and checked a pixel in each BGRA readback. **20/20** retained the pre-overlay green pixel. This validates ownership against a changing desktop pixel on the tested single-output SDR setup; it does not establish whole-image correctness or exclude all possible overlay artifacts. The marker mode flushes the compositor during selection and is not used for latency comparisons.
+
 ## References
 
 - [Microsoft: Snipping Tool protocol and callback requirements](https://learn.microsoft.com/en-us/windows/apps/develop/launch/launch-snipping-tool)

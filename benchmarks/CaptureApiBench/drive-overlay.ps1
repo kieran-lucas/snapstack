@@ -1,4 +1,7 @@
-param([switch]$PauseWorker)
+param(
+    [switch]$PauseWorker,
+    [switch]$VerifyFrozen
+)
 
 $ErrorActionPreference = 'Stop'
 Add-Type @'
@@ -23,10 +26,10 @@ if (-not (Test-Path -LiteralPath $executable)) {
 
 $artifactDirectory = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'artifacts'
 New-Item -ItemType Directory -Force -Path $artifactDirectory | Out-Null
-$variant = if ($PauseWorker) { 'pause' } else { 'continuous' }
+$variant = if ($VerifyFrozen) { 'verify' } elseif ($PauseWorker) { 'pause' } else { 'continuous' }
 $output = Join-Path $artifactDirectory "overlay-benchmark-$variant.txt"
 $errors = Join-Path $artifactDirectory "overlay-benchmark-errors-$variant.txt"
-$argument = if ($PauseWorker) { '--overlay-pause' } else { '--overlay' }
+$argument = if ($VerifyFrozen) { '--overlay-verify' } elseif ($PauseWorker) { '--overlay-pause' } else { '--overlay' }
 $process = Start-Process -FilePath $executable -ArgumentList $argument `
     -WindowStyle Hidden -PassThru -RedirectStandardOutput $output -RedirectStandardError $errors
 
