@@ -81,6 +81,8 @@ A separate 20-selection run placed a green 16 × 16 Win32 marker inside the sele
 
 `src/SnapStack.Capture.Native` now builds a native DLL with a versioned C ABI. Its first exported display probe conservatively accepts only one attached, unrotated SDR output with working DXGI duplication; this development machine reports one 2560 × 1600 output, identity rotation, SDR color space, and status 0. Multiple outputs, rotation, HDR, and unavailable duplication remain on the existing Snipping Tool path until the native engine implements and validates those cases. The DLL is **not yet loaded or packaged by SnapStack**; the Build workflow compiles it and exercises ABI loading. This boundary keeps COM pointers and GPU ownership inside native code rather than exposing them across managed interop.
 
+The DLL now also owns a persistent duplication worker, three GPU frame textures, a frozen-slot pin, and a reusable staging texture. Its `Create`/`Freeze`/`Crop`/`Cancel`/`Destroy` ABI returns caller-owned BGRA memory rather than allocating a PNG on the critical path. A 20-crop local ABI exercise on an 800 × 500 region measured crop/readback median **0.48 ms**, p95 **1.63 ms**, p99 **11.52 ms**; this is not an interactive capture result. The engine pauses worker copies while a frame is pinned. It is still experimental and not yet packaged or wired into the WinUI selection flow.
+
 ## References
 
 - [Microsoft: Snipping Tool protocol and callback requirements](https://learn.microsoft.com/en-us/windows/apps/develop/launch/launch-snipping-tool)
