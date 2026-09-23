@@ -3,6 +3,7 @@
 #include <windowsx.h>
 #include <d3d11.h>
 #include <dwmapi.h>
+#include <wincodec.h>
 #include <dxgi1_6.h>
 #include <wrl/client.h>
 #include <algorithm>
@@ -18,6 +19,8 @@
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "user32.lib")
+#pragma comment(lib, "windowscodecs.lib")
+#pragma comment(lib, "ole32.lib")
 
 using Microsoft::WRL::ComPtr;
 
@@ -537,6 +540,84 @@ private:
     long long releasedAt_ = 0;
 };
 
+struct ComApartment {
+    HRESULT status = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    ~ComApartment() {
+        if (SUCCEEDED(status)) CoUninitialize();
+    }
+};
+
+HRESULT EncodePngCore(const unsigned char* pixels, unsigned width,
+    unsigned height, unsigned stride, size_t pixelsBytes,
+    unsigned char** output, size_t* outputBytes) noexcept {
+    if (!pixels || !output || !outputBytes || width == 0 || height == 0 ||
+        width > UINT_MAX / 4 || stride < width * 4 ||
+        static_cast<size_t>(stride) * height > pixelsBytes ||
+        static_cast<size_t>(stride) * height > UINT_MAX) return E_INVALIDARG;
+    *output = nullptr;
+    *outputBytes = 0;
+
+    ComApartment apartment;
+    if (FAILED(apartment.status) && apartment.status != RPC_E_CHANGED_MODE)
+        return apartment.status;
+
+    ComPtr<IWICImagingFactory> factory;
+    auto hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
+    if (FAILED(hr)) return hr;
+    ComPtr<IStream> stream;
+    hr = CreateStreamOnHGlobal(nullptr, TRUE, &stream);
+    if (FAILED(hr)) return hr;
+    ComPtr<IWICBitmapEncoder> encoder;
+    hr = factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder);
+    if (FAILED(hr)) return hr;
+    hr = encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache);
+    if (FAILED(hr)) return hr;
+    ComPtr<IWICBitmapFrameEncode> frame;
+    ComPtr<IPropertyBag2> options;
+    hr = encoder->CreateNewFrame(&frame, &options);
+    if (FAILED(hr)) return hr;
+    hr = frame->Initialize(options.Get());
+    if (FAILED(hr)) return hr;
+    hr = frame->SetSize(width, height);
+    if (FAILED(hr)) return hr;
+    WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGRA;
+    hr = frame->SetPixelFormat(&format);
+    if (FAILED(hr)) return hr;
+    if (!IsEqualGUID(format, GUID_WICPixelFormat32bppBGRA))
+        return WINCODEC_ERR_UNSUPPORTEDPIXELFORMAT;
+    hr = frame->WritePixels(height, stride,
+        static_cast<UINT>(static_cast<size_t>(stride) * height),
+        const_cast<BYTE*>(pixels));
+    if (FAILED(hr)) return hr;
+    hr = frame->Commit();
+    if (FAILED(hr)) return hr;
+    hr = encoder->Commit();
+    if (FAILED(hr)) return hr;
+
+    STATSTG info{};
+    hr = stream->Stat(&info, STATFLAG_NONAME);
+    if (FAILED(hr)) return hr;
+    if (info.cbSize.QuadPart == 0 || info.cbSize.QuadPart > SIZE_MAX)
+        return E_FAIL;
+    HGLOBAL storage = nullptr;
+    hr = GetHGlobalFromStream(stream.Get(), &storage);
+    if (FAILED(hr)) return hr;
+    const auto source = GlobalLock(storage);
+    if (!source) return HRESULT_FROM_WIN32(GetLastError());
+    const auto size = static_cast<size_t>(info.cbSize.QuadPart);
+    auto destination = static_cast<unsigned char*>(CoTaskMemAlloc(size));
+    if (!destination) {
+        GlobalUnlock(storage);
+        return E_OUTOFMEMORY;
+    }
+    std::memcpy(destination, source, size);
+    GlobalUnlock(storage);
+    *output = destination;
+    *outputBytes = size;
+    return S_OK;
+}
+
 }
 
 extern "C" {
@@ -601,6 +682,18 @@ __declspec(dllexport) void __cdecl SnapCore_Cancel(void* handle) noexcept {
 
 __declspec(dllexport) void __cdecl SnapCore_Destroy(void* handle) noexcept {
     delete static_cast<WarmEngine*>(handle);
+}
+
+__declspec(dllexport) long __cdecl SnapCore_EncodePng(
+    const unsigned char* pixels, unsigned width, unsigned height,
+    unsigned stride, size_t pixelsBytes,
+    unsigned char** output, size_t* outputBytes) noexcept {
+    return EncodePngCore(pixels, width, height, stride,
+        pixelsBytes, output, outputBytes);
+}
+
+__declspec(dllexport) void __cdecl SnapCore_FreeBuffer(void* buffer) noexcept {
+    CoTaskMemFree(buffer);
 }
 
 }

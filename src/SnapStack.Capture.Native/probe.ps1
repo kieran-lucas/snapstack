@@ -2,7 +2,8 @@ param(
     [ValidateSet('x64', 'ARM64')]
     [string]$Architecture = 'x64',
     [switch]$ExerciseCapture,
-    [switch]$ExerciseOverlay
+    [switch]$ExerciseOverlay,
+    [switch]$ExerciseEncoding
 )
 
 $ErrorActionPreference = 'Stop'
@@ -63,6 +64,13 @@ public delegate int SnapCoreBeginSelectionFunction(IntPtr handle);
 [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
 public delegate int SnapCoreWaitSelectionFunction(IntPtr handle, uint timeoutMs,
     ref SnapCoreSelection selection);
+
+[UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+public delegate int SnapCoreEncodePngFunction(IntPtr pixels, uint width, uint height,
+    uint stride, UIntPtr pixelsBytes, out IntPtr png, out UIntPtr pngBytes);
+
+[UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+public delegate void SnapCoreFreeBufferFunction(IntPtr buffer);
 '@
 
 $runtime = if ($Architecture -eq 'ARM64') { 'win-arm64' } else { 'win-x64' }
@@ -88,7 +96,7 @@ try {
         throw 'The native probe return value disagrees with its output structure.'
     }
 
-    if ($ExerciseCapture -or $ExerciseOverlay) {
+    if ($ExerciseCapture -or $ExerciseOverlay -or $ExerciseEncoding) {
         if ($result -ne 0) { throw 'This display is not eligible for the native capture exercise.' }
         $create = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer(
             [System.Runtime.InteropServices.NativeLibrary]::GetExport($handle, 'SnapCore_Create'),
@@ -114,6 +122,7 @@ try {
         $pixels = [System.Runtime.InteropServices.Marshal]::AllocHGlobal($byteCount)
         try {
             $releaseToPixels = [System.Collections.Generic.List[double]]::new()
+            $alphaSamples = [System.Collections.Generic.List[int]]::new()
             if ($ExerciseOverlay) {
                 $begin = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer(
                     [System.Runtime.InteropServices.NativeLibrary]::GetExport($handle, 'SnapCore_BeginSelection'),
@@ -168,6 +177,7 @@ try {
                 if ($status -ne 0) { throw "Crop $index failed: $status" }
                 $releaseToPixels.Add(
                     (($pixelsAt - $startedAt) * 1000.0 / [System.Diagnostics.Stopwatch]::Frequency))
+                $alphaSamples.Add([System.Runtime.InteropServices.Marshal]::ReadByte($pixels, 3))
                 if ($ExerciseOverlay) { Start-Sleep -Milliseconds 250 }
             }
             $releaseToPixels.Sort()
@@ -181,7 +191,69 @@ try {
             }
             Write-Host ("Native core release -> pixels: n=20 median={0:N2} ms p95={1:N2} ms p99={2:N2} ms" -f
                 $releaseToPixels[9], $releaseToPixels[18], $releaseToPixels[19])
+            $alphaSamples.Sort()
+            Write-Host "Sampled BGRA alpha range: $($alphaSamples[0])–$($alphaSamples[19])"
             Write-Host "First BGRA byte: $([System.Runtime.InteropServices.Marshal]::ReadByte($pixels))"
+
+            if ($ExerciseEncoding) {
+                $encode = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer(
+                    [System.Runtime.InteropServices.NativeLibrary]::GetExport($handle, 'SnapCore_EncodePng'),
+                    [SnapCoreEncodePngFunction])
+                $freeBuffer = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer(
+                    [System.Runtime.InteropServices.NativeLibrary]::GetExport($handle, 'SnapCore_FreeBuffer'),
+                    [SnapCoreFreeBufferFunction])
+                $encodeMs = [System.Collections.Generic.List[double]]::new()
+                for ($index = 0; $index -lt 20; $index++) {
+                    $png = [IntPtr]::Zero
+                    $pngLength = [UIntPtr]::Zero
+                    $startedAt = [System.Diagnostics.Stopwatch]::GetTimestamp()
+                    $status = $encode.Invoke($pixels, $width, $height, $width * 4,
+                        [UIntPtr]::new([uint64]($width * $height * 4)),
+                        [ref]$png, [ref]$pngLength)
+                    $endedAt = [System.Diagnostics.Stopwatch]::GetTimestamp()
+                    if ($status -ne 0 -or $png -eq [IntPtr]::Zero) {
+                        throw "WIC PNG encode $index failed: $status"
+                    }
+                    try {
+                        $encodeMs.Add((($endedAt - $startedAt) * 1000.0 /
+                            [System.Diagnostics.Stopwatch]::Frequency))
+                        if ($index -eq 0) {
+                            $pngBytes = [byte[]]::new([int]$pngLength.ToUInt64())
+                            [System.Runtime.InteropServices.Marshal]::Copy(
+                                $png, $pngBytes, 0, $pngBytes.Length)
+                            $signature = [Convert]::ToHexString($pngBytes, 0, 8)
+                            if ($signature -ne '89504E470D0A1A0A') {
+                                throw "Encoder returned invalid PNG signature: $signature"
+                            }
+                            Add-Type -AssemblyName System.Drawing
+                            $stream = [System.IO.MemoryStream]::new($pngBytes)
+                            try {
+                                $bitmap = [System.Drawing.Bitmap]::FromStream($stream)
+                                try {
+                                    if ($bitmap.Width -ne $width -or $bitmap.Height -ne $height) {
+                                        throw "Decoded PNG has wrong dimensions: $($bitmap.Width)x$($bitmap.Height)."
+                                    }
+                                    $pixel = $bitmap.GetPixel(0, 0)
+                                    $rawBlue = [System.Runtime.InteropServices.Marshal]::ReadByte($pixels, 0)
+                                    $rawGreen = [System.Runtime.InteropServices.Marshal]::ReadByte($pixels, 1)
+                                    $rawRed = [System.Runtime.InteropServices.Marshal]::ReadByte($pixels, 2)
+                                    if ($pixel.B -ne $rawBlue -or $pixel.G -ne $rawGreen -or
+                                        $pixel.R -ne $rawRed -or $pixel.A -ne 255) {
+                                        throw 'Decoded PNG pixel does not match raw BGRA.'
+                                    }
+                                }
+                                finally { $bitmap.Dispose() }
+                            }
+                            finally { $stream.Dispose() }
+                            Write-Host "Decoded PNG dimensions and first BGRA pixel verified; bytes=$($pngBytes.Length)"
+                        }
+                    }
+                    finally { $freeBuffer.Invoke($png) }
+                }
+                $encodeMs.Sort()
+                Write-Host ("WIC PNG encode: n=20 median={0:N2} ms p95={1:N2} ms p99={2:N2} ms" -f
+                    $encodeMs[9], $encodeMs[18], $encodeMs[19])
+            }
         }
         finally {
             $cancel.Invoke($engine)

@@ -89,6 +89,8 @@ An A/B 20-selection run on the same single SDR output and nominal 800 × 500 reg
 
 The session model now accepts a capture backed by a pending PNG task. Adding such a capture stores its order and dimensions immediately; clipboard preparation awaits the task on its existing background worker, and the compatibility paste path also awaits it. The current Snipping Tool path still supplies completed PNG bytes, so this refactor alone has no measured end-to-end speedup. It creates the safe handoff needed to let native BGRA pixels enter the session before encoding.
 
+The native core now offers WIC PNG encoding for an existing BGRA buffer, with the encoder output copied once into a caller-owned managed array and freed through the DLL's ABI. A 20-encode local test of an 800 × 500 desktop crop measured median **3.64 ms**, p95 **4.68 ms**, p99 **15.67 ms**. The decoded PNG had the expected 800 × 500 dimensions, the same first BGR pixel as the raw buffer, and opaque alpha; sampled raw alpha was 255 on all 20 crops. This is an encoder primitive test on mostly static content, not a guarantee for complex screenshots. Encoding remains designated background work and must not gate capture readiness.
+
 ## References
 
 - [Microsoft: Snipping Tool protocol and callback requirements](https://learn.microsoft.com/en-us/windows/apps/develop/launch/launch-snipping-tool)
