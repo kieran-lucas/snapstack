@@ -59,6 +59,10 @@ The user reduced the requested run size to 20 captures per comparison. The packa
 
 Clipboard publication is still slower as the stack grows because every publication rewrites all PNG files and rebuilds the entire RTF string. The current change removes that work from the next-capture gate and moves file/package preparation off the UI thread. The final WinRT clipboard publication remains on the UI thread as required by its documented focus/threading behavior. A later optimization should cache unchanged PNG files and avoid repeated full-stack disk writes, then remeasure rather than assuming the improvement.
 
+### Mouse-release-to-next-capture baseline (20 captures)
+
+A second 20-selection run of the same packaged 0.1.0.9 candidate measured from the harness's injected mouse release until UI Automation observed the next Capture button enabled. Median / p95 / p99 were **773.96 / 793.94 / 812.22 ms** (min 746.40, max 812.22 ms). This includes up to 20 ms of polling uncertainty. In that same run, protocol activation → next-ready was 11.38 / 12.48 / 12.59 ms and session insertion → next-ready was 0.56 / 0.69 / 0.98 ms. The approximately 0.76 s gap before protocol activation is therefore the largest measured delay in this interaction, but this harness cannot separate Snipping Tool's capture/animation, URI callback dispatch, and any input-injection effects. A custom overlay/capture contender must beat this release-to-ready baseline with the same region, display, and 20-selection method before replacing the shipping path.
+
 ## References
 
 - [Microsoft: Snipping Tool protocol and callback requirements](https://learn.microsoft.com/en-us/windows/apps/develop/launch/launch-snipping-tool)

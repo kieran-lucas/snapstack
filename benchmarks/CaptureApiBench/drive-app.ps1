@@ -52,7 +52,9 @@ if (-not $ContinueSession) {
 }
 $countText = Find-Control 'CountText'
 $feedback = Find-Control 'FeedbackText'
+$captureButton = Find-Control 'CaptureButton'
 $initialCount = [int]$countText.Current.Name
+$releaseToReadyMs = [System.Collections.Generic.List[double]]::new()
 
 for ($index = $initialCount + 1; $index -le $initialCount + $Count; $index++) {
     Invoke-Control 'CaptureButton'
@@ -63,19 +65,30 @@ for ($index = $initialCount + 1; $index -le $initialCount + $Count; $index++) {
         [SnapStackBenchmarkMouse]::SetCursorPos((600 + $step * 80), (400 + $step * 50)) | Out-Null
         Start-Sleep -Milliseconds 10
     }
+    $releasedAt = [System.Diagnostics.Stopwatch]::GetTimestamp()
     [SnapStackBenchmarkMouse]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
 
     $deadline = [DateTime]::UtcNow.AddSeconds(15)
-    while ($countText.Current.Name -ne [string]$index) {
+    while ($countText.Current.Name -ne [string]$index -or -not $captureButton.Current.IsEnabled) {
         if ([DateTime]::UtcNow -ge $deadline) {
             throw "Capture $index did not arrive. Status: $($feedback.Current.Name)"
         }
         Start-Sleep -Milliseconds 20
     }
+    $readyAt = [System.Diagnostics.Stopwatch]::GetTimestamp()
+    $releaseToReadyMs.Add(
+        (($readyAt - $releasedAt) * 1000.0 / [System.Diagnostics.Stopwatch]::Frequency))
     if ($index % 10 -eq 0) {
         Write-Host "Captured $index / $($initialCount + $Count)"
     }
 }
+
+$releaseToReadyMs.Sort()
+$sampleCount = $releaseToReadyMs.Count
+$median = ($releaseToReadyMs[[Math]::Floor(($sampleCount - 1) / 2)] + $releaseToReadyMs[[Math]::Floor($sampleCount / 2)]) / 2
+$p95 = $releaseToReadyMs[[Math]::Ceiling($sampleCount * 0.95) - 1]
+$p99 = $releaseToReadyMs[[Math]::Ceiling($sampleCount * 0.99) - 1]
+Write-Host ("Mouse release -> next Capture button enabled: n={0}, median={1:N2} ms, p95={2:N2} ms, p99={3:N2} ms, min={4:N2} ms, max={5:N2} ms" -f $sampleCount, $median, $p95, $p99, $releaseToReadyMs[0], $releaseToReadyMs[$sampleCount - 1])
 
 Invoke-Control 'StopButton'
 $deadline = [DateTime]::UtcNow.AddSeconds(30)
