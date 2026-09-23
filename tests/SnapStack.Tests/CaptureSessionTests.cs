@@ -64,4 +64,28 @@ public sealed class CaptureSessionTests
             new byte[] { 0x10, 0x20 },
             capture.PngBytes.ToArray());
     }
+
+    [TestMethod]
+    public async Task DeferredPngDoesNotBlockSessionInsertion()
+    {
+        var encoded = new TaskCompletionSource<ReadOnlyMemory<byte>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new CaptureSession();
+        session.Start();
+
+        var capture = session.AddDeferredCapture(encoded.Task, 800, 500);
+
+        Assert.AreEqual(1, session.Count);
+        Assert.AreEqual(1, capture.Sequence);
+        Assert.ThrowsExactly<InvalidOperationException>(() => _ = capture.PngBytes);
+
+        encoded.SetResult(new byte[] { 0x89, 0x50 });
+
+        CollectionAssert.AreEqual(
+            new byte[] { 0x89, 0x50 },
+            (await capture.GetPngBytesAsync()).ToArray());
+        CollectionAssert.AreEqual(
+            new byte[] { 0x89, 0x50 },
+            capture.PngBytes.ToArray());
+    }
 }

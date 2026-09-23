@@ -87,6 +87,8 @@ The native core now has a pre-created two-window selection overlay on a dedicate
 
 An A/B 20-selection run on the same single SDR output and nominal 800 × 500 region measured mouse release → BGRA pixels at **24.36 / 34.85 / 44.25 ms** median / p95 / p99 when flushing the compositor after hiding the overlay, versus **6.20 / 14.71 / 28.92 ms** without the flush. All 20/20 selections in each run completed, and their actual dimensions were exactly 800 × 500. The no-flush path is retained for the candidate because a synchronous compositor wait needlessly gates readback; rapid-repeat contamination and freshness still need targeted validation. Begin → overlay submission was 6.48 / 8.88 / 12.05 ms with hide flush and 7.25 / 9.06 / 21.17 ms without, which does **not** establish hotkey → visually presented overlay.
 
+The session model now accepts a capture backed by a pending PNG task. Adding such a capture stores its order and dimensions immediately; clipboard preparation awaits the task on its existing background worker, and the compatibility paste path also awaits it. The current Snipping Tool path still supplies completed PNG bytes, so this refactor alone has no measured end-to-end speedup. It creates the safe handoff needed to let native BGRA pixels enter the session before encoding.
+
 ## References
 
 - [Microsoft: Snipping Tool protocol and callback requirements](https://learn.microsoft.com/en-us/windows/apps/develop/launch/launch-snipping-tool)

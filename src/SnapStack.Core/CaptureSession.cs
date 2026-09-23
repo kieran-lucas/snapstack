@@ -26,25 +26,12 @@ public sealed class CaptureSession
 
     public CapturedImage AddCapture(ReadOnlySpan<byte> pngBytes, int pixelWidth, int pixelHeight)
     {
-        if (!IsActive)
-        {
-            throw new InvalidOperationException("A capture session must be active before adding images.");
-        }
-
         if (pngBytes.IsEmpty)
         {
             throw new ArgumentException("Capture data cannot be empty.", nameof(pngBytes));
         }
 
-        if (pixelWidth <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(pixelWidth));
-        }
-
-        if (pixelHeight <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(pixelHeight));
-        }
+        ValidateCapture(pixelWidth, pixelHeight);
 
         var capture = new CapturedImage(
             Guid.NewGuid(),
@@ -56,6 +43,44 @@ public sealed class CaptureSession
 
         _captures.Add(capture);
         return capture;
+    }
+
+    public CapturedImage AddDeferredCapture(
+        Task<ReadOnlyMemory<byte>> pngTask,
+        int pixelWidth,
+        int pixelHeight)
+    {
+        ArgumentNullException.ThrowIfNull(pngTask);
+        ValidateCapture(pixelWidth, pixelHeight);
+
+        var capture = new CapturedImage(
+            Guid.NewGuid(),
+            _captures.Count + 1,
+            DateTimeOffset.UtcNow,
+            pixelWidth,
+            pixelHeight,
+            pngTask);
+
+        _captures.Add(capture);
+        return capture;
+    }
+
+    private void ValidateCapture(int pixelWidth, int pixelHeight)
+    {
+        if (!IsActive)
+        {
+            throw new InvalidOperationException("A capture session must be active before adding images.");
+        }
+
+        if (pixelWidth <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pixelWidth));
+        }
+
+        if (pixelHeight <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pixelHeight));
+        }
     }
 
     public void Stop()

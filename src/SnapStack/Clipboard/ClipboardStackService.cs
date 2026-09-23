@@ -25,6 +25,14 @@ public sealed class ClipboardStackService
             .OrderBy(item => item.Sequence)
             .ToArray();
 
+        // Native captures enter the session before PNG encoding completes.
+        // Resolve them on this background publication worker, never in the
+        // selection or WinUI path.
+        foreach (var capture in orderedCaptures)
+        {
+            await capture.GetPngBytesAsync().ConfigureAwait(false);
+        }
+
         var clipboardRoot = await ApplicationData.Current.TemporaryFolder
             .CreateFolderAsync(
                 ClipboardRootFolderName,

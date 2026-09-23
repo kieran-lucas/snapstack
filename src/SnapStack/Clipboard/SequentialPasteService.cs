@@ -41,6 +41,8 @@ public sealed class SequentialPasteService
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            await capture.GetPngBytesAsync();
+
             await PublishBitmapAsync(capture);
 
             // Give the destination application time to observe the new
