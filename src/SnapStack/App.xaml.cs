@@ -13,6 +13,8 @@ public partial class App : Application
 
     public SnippingToolCaptureService SnippingToolCapture { get; } = new();
 
+    public ICaptureEngine CaptureEngine => SnippingToolCapture;
+
     public event EventHandler<CaptureHotKeyRequestedEventArgs>? CaptureHotKeyRequested;
     public event EventHandler? EndHotKeyRequested;
     public event EventHandler? PasteHotKeyRequested;

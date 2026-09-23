@@ -15,7 +15,7 @@ public sealed partial class MainPage : Page
     private readonly ClipboardPublishCoordinator _clipboardPublisher;
     private readonly SequentialPasteService _sequentialPasteService = new();
 
-    private SnippingToolCaptureService? _snippingToolCapture;
+    private ICaptureEngine? _captureEngine;
     private bool _snipInProgress;
     private bool _clipboardPublishInProgress;
     private bool _stackPasteInProgress;
@@ -37,8 +37,8 @@ public sealed partial class MainPage : Page
     {
         var app = (App)Application.Current;
 
-        _snippingToolCapture = app.SnippingToolCapture;
-        _snippingToolCapture.CaptureCompleted += SnippingToolCapture_CaptureCompleted;
+        _captureEngine = app.CaptureEngine;
+        _captureEngine.CaptureCompleted += CaptureEngine_CaptureCompleted;
         app.CaptureHotKeyRequested += App_CaptureHotKeyRequested;
         app.EndHotKeyRequested += App_EndHotKeyRequested;
         app.PasteHotKeyRequested += App_PasteHotKeyRequested;
@@ -52,9 +52,9 @@ public sealed partial class MainPage : Page
         app.EndHotKeyRequested -= App_EndHotKeyRequested;
         app.PasteHotKeyRequested -= App_PasteHotKeyRequested;
 
-        if (_snippingToolCapture is not null)
+        if (_captureEngine is not null)
         {
-            _snippingToolCapture.CaptureCompleted -= SnippingToolCapture_CaptureCompleted;
+            _captureEngine.CaptureCompleted -= CaptureEngine_CaptureCompleted;
         }
 
         app.SetCaptureHotKeyEnabled(false, out _);
@@ -128,7 +128,7 @@ public sealed partial class MainPage : Page
         if (!_session.IsActive
             || _snipInProgress
             || _stackPasteInProgress
-            || _snippingToolCapture is null)
+            || _captureEngine is null)
         {
             if (trace is not null)
             {
@@ -143,12 +143,12 @@ public sealed partial class MainPage : Page
         }
 
         _snipInProgress = true;
-        FeedbackText.Text = "Select a rectangle in the Snipping Tool overlay.";
+        FeedbackText.Text = "Select a rectangle to capture.";
         RenderSession();
 
         try
         {
-            var launched = await _snippingToolCapture.LaunchRectangleCaptureAsync(trace);
+            var launched = await _captureEngine.BeginRectangleCaptureAsync(trace);
 
             if (!launched)
             {
@@ -159,7 +159,7 @@ public sealed partial class MainPage : Page
                     trace.NextCaptureReady = CaptureLatencyTrace.Now();
                     CaptureLatencyTrace.Complete(trace);
                 }
-                FeedbackText.Text = "Could not launch Snipping Tool.";
+                FeedbackText.Text = "Could not start rectangle capture.";
                 RenderSession();
             }
         }
@@ -177,16 +177,16 @@ public sealed partial class MainPage : Page
         }
     }
 
-    private void SnippingToolCapture_CaptureCompleted(
+    private void CaptureEngine_CaptureCompleted(
         object? sender,
-        SnippingCaptureResult result)
+        CaptureEngineResult result)
     {
         DispatcherQueue.TryEnqueue(
-            () => _ = HandleSnippingCaptureCompletedAsync(result));
+            () => _ = HandleCaptureCompletedAsync(result));
     }
 
-    private async Task HandleSnippingCaptureCompletedAsync(
-        SnippingCaptureResult result)
+    private async Task HandleCaptureCompletedAsync(
+        CaptureEngineResult result)
     {
         var trace = result.LatencyTrace;
         _snipInProgress = false;

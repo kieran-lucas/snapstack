@@ -7,7 +7,7 @@ using Windows.System;
 
 namespace SnapStack.Capture;
 
-public sealed class SnippingToolCaptureService
+public sealed class SnippingToolCaptureService : ICaptureEngine
 {
     private const string CallbackScheme = "snapstack";
     private const string CallbackHost = "capture-response";
@@ -15,9 +15,12 @@ public sealed class SnippingToolCaptureService
     private string? _pendingCorrelationId;
     private CaptureLatencyTrace? _pendingTrace;
 
-    public event EventHandler<SnippingCaptureResult>? CaptureCompleted;
+    public event EventHandler<CaptureEngineResult>? CaptureCompleted;
 
     public bool IsCapturePending => _pendingCorrelationId is not null;
+
+    public Task<bool> BeginRectangleCaptureAsync(CaptureLatencyTrace? trace) =>
+        LaunchRectangleCaptureAsync(trace);
 
     public async Task<bool> LaunchRectangleCaptureAsync(CaptureLatencyTrace? trace = null)
     {
@@ -105,7 +108,7 @@ public sealed class SnippingToolCaptureService
 
         if (code == "499")
         {
-            CaptureCompleted?.Invoke(this, SnippingCaptureResult.Cancelled(trace));
+            CaptureCompleted?.Invoke(this, CaptureEngineResult.Cancelled(trace));
             return true;
         }
 
@@ -113,7 +116,7 @@ public sealed class SnippingToolCaptureService
         {
             CaptureCompleted?.Invoke(
                 this,
-                SnippingCaptureResult.Failed(
+                CaptureEngineResult.Failed(
                     string.IsNullOrWhiteSpace(reason)
                         ? $"Snipping Tool returned status {code ?? "unknown"}."
                         : reason,
@@ -127,7 +130,7 @@ public sealed class SnippingToolCaptureService
         {
             CaptureCompleted?.Invoke(
                 this,
-                SnippingCaptureResult.Failed(
+                CaptureEngineResult.Failed(
                     "Snipping Tool returned success without a file access token.",
                     trace));
 
@@ -150,13 +153,13 @@ public sealed class SnippingToolCaptureService
 
             CaptureCompleted?.Invoke(
                 this,
-                SnippingCaptureResult.Success(payload, trace));
+                CaptureEngineResult.Success(payload, trace));
         }
         catch (Exception exception)
         {
             CaptureCompleted?.Invoke(
                 this,
-                SnippingCaptureResult.Failed(exception.Message, trace));
+                CaptureEngineResult.Failed(exception.Message, trace));
         }
 
         return true;
