@@ -63,6 +63,12 @@ Clipboard publication is still slower as the stack grows because every publicati
 
 A second 20-selection run of the same packaged 0.1.0.9 candidate measured from the harness's injected mouse release until UI Automation observed the next Capture button enabled. Median / p95 / p99 were **773.96 / 793.94 / 812.22 ms** (min 746.40, max 812.22 ms). This includes up to 20 ms of polling uncertainty. In that same run, protocol activation → next-ready was 11.38 / 12.48 / 12.59 ms and session insertion → next-ready was 0.56 / 0.69 / 0.98 ms. The approximately 0.76 s gap before protocol activation is therefore the largest measured delay in this interaction, but this harness cannot separate Snipping Tool's capture/animation, URI callback dispatch, and any input-injection effects. A custom overlay/capture contender must beat this release-to-ready baseline with the same region, display, and 20-selection method before replacing the shipping path.
 
+### Interactive DXGI/Win32 contender, single output (20 selections)
+
+The first custom contender has a persistent `AcquireNextFrame` worker, three application-owned GPU textures, pinned generation ownership, a pre-created layered Win32 overlay, and GPU region copy to staging readback. The same 800 × 500 automated selection geometry was used on the primary Intel output. Across two separate 20-selection runs, native-QPC trigger → overlay `DwmFlush` median ranged **13.23–14.45 ms**, p95 **27.82–28.01 ms**; mouse release → selected BGRA pixels median ranged **4.88–5.50 ms**, p95 **12.18–12.34 ms**. All 40 selections completed. The copied-frame age at trigger had median 5.10–5.24 ms, but this is only time since the worker copy, not true desktop content age. The p95 readback cost rose when the live worker continued copying frames during selection, so a paused-worker variant is worth measuring.
+
+This is an experimental native benchmark, **not** the full application path. It has not yet proven PNG/session/clipboard readiness, all-monitor geometry, HDR color, recovery, cancellation correctness, or long-run resource stability. Its release-to-pixels figure must not be presented as release-to-next-capture-ready. The production default remains Snipping Tool until those gates pass.
+
 ## References
 
 - [Microsoft: Snipping Tool protocol and callback requirements](https://learn.microsoft.com/en-us/windows/apps/develop/launch/launch-snipping-tool)

@@ -1,5 +1,8 @@
+#define NOMINMAX
 #include <windows.h>
+#include <windowsx.h>
 #include <d3d11.h>
+#include <dwmapi.h>
 #include <dxgi1_2.h>
 #include <windows.graphics.capture.interop.h>
 #include <windows.graphics.directx.direct3d11.interop.h>
@@ -208,11 +211,11 @@ struct Cropper {
         : graphics(graphics), staging(graphics.texture(width, height, D3D11_USAGE_STAGING)),
           width(width), height(height), pixels(static_cast<size_t>(width) * height * 4) {}
 
-    void crop(ID3D11Texture2D* source, Sample& sample) {
+    void crop(ID3D11Texture2D* source, Sample& sample, UINT x = 0, UINT y = 0) {
         D3D11_TEXTURE2D_DESC desc{};
         source->GetDesc(&desc);
-        D3D11_BOX box{0, 0, 0, width, height, 1};
-        if (desc.Width < width || desc.Height < height || desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM)
+        D3D11_BOX box{x, y, 0, x + width, y + height, 1};
+        if (desc.Width < x + width || desc.Height < y + height || desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM)
             throw std::runtime_error("Unexpected source texture dimensions or format");
         auto copyStart = stamp();
         graphics.context->CopySubresourceRegion(staging.get(), 0, 0, 0, 0, source, 0, &box);
@@ -378,9 +381,315 @@ void benchmarkWgc(Graphics& graphics, Stimulus& stimulus) {
     report("Windows.Graphics.Capture monitor", samples);
 }
 
+// Interactive single-output contender. Its three full-frame textures are owned
+// by this process, not by IDXGIOutputDuplication. A pinned slot is never reused
+// until the crop finishes, including while overlay frames continue arriving.
+class WarmDuplication {
+public:
+    explicit WarmDuplication(Graphics& graphics) : graphics_(graphics) {
+        check(graphics_.output->DuplicateOutput(graphics_.device.get(), duplication_.put()),
+            "DuplicateOutput for overlay contender");
+        const auto width = static_cast<UINT>(graphics_.bounds.right - graphics_.bounds.left);
+        const auto height = static_cast<UINT>(graphics_.bounds.bottom - graphics_.bounds.top);
+        for (auto& slot : slots_) slot.texture = graphics_.texture(width, height, D3D11_USAGE_DEFAULT);
+        worker_ = std::thread([this] { run(); });
+    }
+
+    ~WarmDuplication() {
+        stop_ = true;
+        if (worker_.joinable()) worker_.join();
+    }
+
+    int pin() {
+        for (int retry = 0; retry < 100 && !stop_; ++retry) {
+            {
+                std::lock_guard lock(mutex_);
+                if (failure_) std::rethrow_exception(failure_);
+                if (latest_ >= 0) {
+                    pinned_ = latest_;
+                    return pinned_;
+                }
+            }
+            Sleep(10);
+        }
+        throw std::runtime_error("No desktop frame became available");
+    }
+
+    void cropPinned(Cropper& cropper, UINT x, UINT y, Sample& sample) {
+        std::lock_guard lock(mutex_);
+        if (pinned_ < 0) throw std::runtime_error("No frozen desktop frame");
+        cropper.crop(slots_[pinned_].texture.get(), sample, x, y);
+    }
+
+    void unpin() {
+        std::lock_guard lock(mutex_);
+        pinned_ = -1;
+    }
+
+    double pinnedAgeMs() {
+        std::lock_guard lock(mutex_);
+        return pinned_ < 0 ? 0 : milliseconds(slots_[pinned_].copiedAt, stamp());
+    }
+
+private:
+    struct Slot {
+        com_ptr<ID3D11Texture2D> texture;
+        LARGE_INTEGER copiedAt{};
+    };
+
+    void run() {
+        try {
+            while (!stop_) {
+                DXGI_OUTDUPL_FRAME_INFO info{};
+                com_ptr<IDXGIResource> resource;
+                const auto hr = duplication_->AcquireNextFrame(16, &info, resource.put());
+                if (hr == DXGI_ERROR_WAIT_TIMEOUT) continue;
+                check(hr, "AcquireNextFrame for overlay contender");
+                try {
+                    com_ptr<ID3D11Texture2D> source;
+                    resource.as(source);
+                    std::lock_guard lock(mutex_);
+                    int next = (latest_ + 1) % 3;
+                    if (next == pinned_) next = (next + 1) % 3;
+                    graphics_.context->CopyResource(slots_[next].texture.get(), source.get());
+                    graphics_.context->Flush();
+                    slots_[next].copiedAt = stamp();
+                    latest_ = next;
+                } catch (...) {
+                    duplication_->ReleaseFrame();
+                    throw;
+                }
+                check(duplication_->ReleaseFrame(), "ReleaseFrame for overlay contender");
+            }
+        } catch (...) {
+            std::lock_guard lock(mutex_);
+            failure_ = std::current_exception();
+            stop_ = true;
+        }
+    }
+
+    Graphics& graphics_;
+    com_ptr<IDXGIOutputDuplication> duplication_;
+    Slot slots_[3];
+    std::mutex mutex_;
+    std::thread worker_;
+    std::atomic<bool> stop_{false};
+    std::exception_ptr failure_;
+    int latest_ = -1;
+    int pinned_ = -1;
+};
+
+struct OverlayState {
+    HWND input{};
+    HWND border{};
+    POINT start{};
+    POINT end{};
+    bool dragging = false;
+    bool done = false;
+    bool cancelled = false;
+    LARGE_INTEGER released{};
+};
+
+LRESULT CALLBACK overlayInputProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (message == WM_NCCREATE) {
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+            reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lparam)->lpCreateParams));
+    }
+    auto* state = reinterpret_cast<OverlayState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (!state) return DefWindowProcW(hwnd, message, wparam, lparam);
+    switch (message) {
+    case WM_LBUTTONDOWN:
+        state->start = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        state->end = state->start;
+        state->dragging = true;
+        SetCapture(hwnd);
+        return 0;
+    case WM_MOUSEMOVE:
+        if (state->dragging) {
+            state->end = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+            InvalidateRect(state->border, nullptr, FALSE);
+        }
+        return 0;
+    case WM_LBUTTONUP:
+        if (state->dragging) {
+            state->released = stamp();
+            state->end = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+            state->dragging = false;
+            state->done = true;
+            ReleaseCapture();
+        }
+        return 0;
+    case WM_KEYDOWN:
+        if (wparam == VK_ESCAPE) {
+            state->cancelled = true;
+            state->done = true;
+            if (GetCapture() == hwnd) ReleaseCapture();
+            return 0;
+        }
+        break;
+    case WM_TIMER:
+        state->cancelled = true;
+        state->done = true;
+        return 0;
+    }
+    return DefWindowProcW(hwnd, message, wparam, lparam);
+}
+
+LRESULT CALLBACK overlayBorderProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (message == WM_NCCREATE) {
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+            reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lparam)->lpCreateParams));
+    }
+    if (message == WM_PAINT) {
+        PAINTSTRUCT ps{};
+        const auto dc = BeginPaint(hwnd, &ps);
+        FillRect(dc, &ps.rcPaint, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+        auto* state = reinterpret_cast<OverlayState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        if (state && state->dragging) {
+            const auto pen = CreatePen(PS_SOLID, 3, RGB(32, 220, 240));
+            const auto oldPen = SelectObject(dc, pen);
+            const auto oldBrush = SelectObject(dc, GetStockObject(HOLLOW_BRUSH));
+            Rectangle(dc, std::min(state->start.x, state->end.x),
+                std::min(state->start.y, state->end.y),
+                std::max(state->start.x, state->end.x),
+                std::max(state->start.y, state->end.y));
+            SelectObject(dc, oldBrush);
+            SelectObject(dc, oldPen);
+            DeleteObject(pen);
+        }
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, message, wparam, lparam);
+}
+
+class Overlay {
+public:
+    explicit Overlay(RECT bounds) : bounds_(bounds) {
+        WNDCLASSW inputClass{};
+        inputClass.lpfnWndProc = overlayInputProc;
+        inputClass.hInstance = GetModuleHandleW(nullptr);
+        inputClass.lpszClassName = L"SnapStackOverlayBenchInput";
+        inputClass.hCursor = LoadCursor(nullptr, IDC_CROSS);
+        RegisterClassW(&inputClass);
+        WNDCLASSW borderClass = inputClass;
+        borderClass.lpfnWndProc = overlayBorderProc;
+        borderClass.lpszClassName = L"SnapStackOverlayBenchBorder";
+        RegisterClassW(&borderClass);
+        const int width = bounds.right - bounds.left;
+        const int height = bounds.bottom - bounds.top;
+        state_.input = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+            inputClass.lpszClassName, L"", WS_POPUP, bounds.left, bounds.top,
+            width, height, nullptr, nullptr, inputClass.hInstance, &state_);
+        state_.border = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW |
+                WS_EX_TRANSPARENT | WS_EX_NOACTIVATE,
+            borderClass.lpszClassName, L"", WS_POPUP, bounds.left, bounds.top,
+            width, height, nullptr, nullptr, borderClass.hInstance, &state_);
+        if (!state_.input || !state_.border) throw std::runtime_error("Overlay window creation failed");
+        SetLayeredWindowAttributes(state_.input, 0, 64, LWA_ALPHA);
+        SetLayeredWindowAttributes(state_.border, RGB(0, 0, 0), 0, LWA_COLORKEY);
+        SetWindowDisplayAffinity(state_.input, WDA_EXCLUDEFROMCAPTURE);
+        SetWindowDisplayAffinity(state_.border, WDA_EXCLUDEFROMCAPTURE);
+    }
+
+    ~Overlay() {
+        if (state_.border) DestroyWindow(state_.border);
+        if (state_.input) DestroyWindow(state_.input);
+    }
+
+    LARGE_INTEGER show() {
+        state_.done = state_.cancelled = state_.dragging = false;
+        InvalidateRect(state_.border, nullptr, FALSE);
+        previousForeground_ = GetForegroundWindow();
+        ShowWindow(state_.input, SW_SHOW);
+        ShowWindow(state_.border, SW_SHOWNOACTIVATE);
+        SetForegroundWindow(state_.input);
+        SetFocus(state_.input);
+        SetTimer(state_.input, 1, 15000, nullptr);
+        UpdateWindow(state_.input);
+        UpdateWindow(state_.border);
+        DwmFlush();
+        return stamp();
+    }
+
+    bool waitForSelection() {
+        MSG message{};
+        while (!state_.done) {
+            const auto result = GetMessageW(&message, nullptr, 0, 0);
+            if (result <= 0) {
+                state_.cancelled = true;
+                break;
+            }
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+        KillTimer(state_.input, 1);
+        ShowWindow(state_.border, SW_HIDE);
+        ShowWindow(state_.input, SW_HIDE);
+        if (previousForeground_ && IsWindow(previousForeground_))
+            SetForegroundWindow(previousForeground_);
+        return !state_.cancelled;
+    }
+
+    RECT selection() const {
+        return {std::min(state_.start.x, state_.end.x),
+            std::min(state_.start.y, state_.end.y),
+            std::max(state_.start.x, state_.end.x),
+            std::max(state_.start.y, state_.end.y)};
+    }
+
+    LARGE_INTEGER released() const { return state_.released; }
+
+private:
+    RECT bounds_{};
+    OverlayState state_{};
+    HWND previousForeground_{};
+};
+
+void benchmarkOverlay(Graphics& graphics, Stimulus& stimulus) {
+    printf("Interactive overlay contender: 20 selections, exactly %ux%u pixels each.\n",
+        kCropWidth, kCropHeight);
+    WarmDuplication frames(graphics);
+    Overlay overlay(graphics.bounds);
+    Cropper cropper(graphics, kCropWidth, kCropHeight);
+    stimulus.update();
+    std::vector<double> showMs, releaseToPixelsMs, frameAgeMs;
+    for (unsigned i = 0; i < 20; ++i) {
+        const auto triggered = stamp();
+        frames.pin();
+        frameAgeMs.push_back(frames.pinnedAgeMs());
+        const auto shown = overlay.show();
+        showMs.push_back(milliseconds(triggered, shown));
+        if (!overlay.waitForSelection()) {
+            frames.unpin();
+            printf("Selection %u cancelled or timed out\n", i + 1);
+            break;
+        }
+        const auto selection = overlay.selection();
+        if (selection.right - selection.left != kCropWidth ||
+            selection.bottom - selection.top != kCropHeight) {
+            frames.unpin();
+            printf("Selection %u was %ldx%ld, expected %ux%u\n", i + 1,
+                selection.right - selection.left, selection.bottom - selection.top,
+                kCropWidth, kCropHeight);
+            break;
+        }
+        Sample sample;
+        frames.cropPinned(cropper, selection.left, selection.top, sample);
+        frames.unpin();
+        releaseToPixelsMs.push_back(milliseconds(overlay.released(), stamp()));
+        printf("Selection %u/20: release->pixels %.3f ms, crop issue %.3f ms, readback %.3f ms\n",
+            i + 1, releaseToPixelsMs.back(), sample.copyMs, sample.readMs);
+        Sleep(250);
+    }
+    print("trigger -> overlay flush", showMs);
+    print("mouse release -> pixels", releaseToPixelsMs);
+    print("frame age at trigger", frameAgeMs);
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     try {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         winrt::init_apartment(winrt::apartment_type::multi_threaded);
@@ -392,6 +701,10 @@ int main() {
         printf("Primary output adapter: %ls\n", graphics.adapterName.c_str());
         printf("Reported display refresh: %lu Hz\n", graphics.refreshHz);
         Stimulus stimulus(graphics.bounds);
+        if (argc > 1 && strcmp(argv[1], "--overlay") == 0) {
+            benchmarkOverlay(graphics, stimulus);
+            return 0;
+        }
         benchmarkGdi(graphics, stimulus);
         benchmarkDuplication(graphics, stimulus, false);
         benchmarkDuplication(graphics, stimulus, true);

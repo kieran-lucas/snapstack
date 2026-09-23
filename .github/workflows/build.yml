@@ -31,5 +31,9 @@ jobs:
       - name: Build app
         run: dotnet build src/SnapStack/SnapStack.csproj --configuration Release -p:Platform=x64 --no-restore
 
+      - name: Build native capture prototypes
+        shell: pwsh
+        run: ./benchmarks/CaptureApiBench/build.ps1
+
       - name: Test
         run: dotnet test tests/SnapStack.Tests/SnapStack.Tests.csproj --configuration Release --no-restore
