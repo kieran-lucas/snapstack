@@ -8,7 +8,7 @@
   <Identity
     Name="KieranLucas.SnapStack"
     Publisher="CN=Kieran Lucas"
-    Version="0.1.0.7" />
+    Version="0.1.0.9" />
 
   <Properties>
     <DisplayName>SnapStack</DisplayName>

@@ -11,7 +11,8 @@ public sealed class ClipboardStackService
 {
     private const string ClipboardRootFolderName = "SnapStackClipboard";
 
-    public async Task PublishAsync(IReadOnlyList<CapturedImage> captures)
+    internal async Task<PreparedClipboardStack> PrepareAsync(
+        IReadOnlyList<CapturedImage> captures)
     {
         if (captures.Count == 0)
         {
@@ -39,34 +40,51 @@ public sealed class ClipboardStackService
                 publishFolder,
                 orderedCaptures);
 
-            var dataPackage = BuildDataPackage(
-                orderedCaptures,
-                files);
-
-            var options = new ClipboardContentOptions
-            {
-                IsAllowedInHistory = false,
-                IsRoamable = false
-            };
-
-            if (!Windows.ApplicationModel.DataTransfer.Clipboard.SetContentWithOptions(
-                    dataPackage,
-                    options))
-            {
-                throw new InvalidOperationException(
-                    "Windows could not set the SnapStack clipboard content.");
-            }
-
-            Windows.ApplicationModel.DataTransfer.Clipboard.Flush();
-
-            await RemoveOlderPublishFoldersAsync(
+            return new PreparedClipboardStack(
+                BuildDataPackage(orderedCaptures, files),
                 clipboardRoot,
-                publishFolder.Name);
+                publishFolder);
         }
         catch
         {
             await publishFolder.DeleteAsync(StorageDeleteOption.PermanentDelete);
             throw;
+        }
+    }
+
+    // Clipboard APIs are invoked on the app's UI thread. Disk I/O and the
+    // potentially large RTF/HTML payload have already been prepared off it.
+    internal static void PublishPrepared(PreparedClipboardStack prepared)
+    {
+        var options = new ClipboardContentOptions
+        {
+            IsAllowedInHistory = false,
+            IsRoamable = false
+        };
+
+        if (!Windows.ApplicationModel.DataTransfer.Clipboard.SetContentWithOptions(
+                prepared.Package,
+                options))
+        {
+            throw new InvalidOperationException(
+                "Windows could not set the SnapStack clipboard content.");
+        }
+
+        Windows.ApplicationModel.DataTransfer.Clipboard.Flush();
+    }
+
+    internal static Task CleanupAsync(PreparedClipboardStack prepared) =>
+        RemoveOlderPublishFoldersAsync(prepared.Root, prepared.Folder.Name);
+
+    internal static async Task DiscardAsync(PreparedClipboardStack prepared)
+    {
+        try
+        {
+            await prepared.Folder.DeleteAsync(StorageDeleteOption.PermanentDelete);
+        }
+        catch
+        {
+            // Cleanup is best effort after a failed clipboard publication.
         }
     }
 
@@ -165,3 +183,8 @@ public sealed class ClipboardStackService
         }
     }
 }
+
+internal sealed record PreparedClipboardStack(
+    DataPackage Package,
+    StorageFolder Root,
+    StorageFolder Folder);

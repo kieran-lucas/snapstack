@@ -4,7 +4,7 @@
 
 This is the first comparative prototype, measured on Windows build 26200, Intel Core 7 245HX, primary 2560 × 1600 / 165 Hz display on Intel Graphics (an RTX 5060 is present but does not drive the primary display). The harness runs 100 samples per contender with five warmups. Values below are one complete run; repeat runs showed the same ordering, with warm DXGI snapshot median between 0.379 and 0.584 ms. All timings use QueryPerformanceCounter.
 
-These are **capture primitive** measurements. The current SnapStack `ms-screenclip` path has no end-to-end instrumentation yet, so there are no honest before/after hotkey or clipboard figures. The picker interaction cannot be inferred from API call timing. Application-level T0–T7 tracing and a manual or automated interactive run are still required.
+These are **capture primitive** measurements. The later application-level measurements below cover stages observable through the existing `ms-screenclip` path, but not hotkey-to-overlay or mouse-release-to-pixels latency. The picker interaction cannot be inferred from API call timing.
 
 | 800 × 500 BGRA region, 100 samples | Median total | p95 total | p99 total |
 | --- | ---: | ---: | ---: |
@@ -20,7 +20,7 @@ The DXGI warm-snapshot test spends 0.001 ms median issuing `CopySubresourceRegio
 
 `RegisterHotKey` → WinUI event → `Launcher.LaunchUriAsync(ms-screenclip:)` → Snipping Tool UI → protocol callback → token redemption → file read → PNG copy into `CaptureSession` → recreate a folder and write **every** capture as a PNG file → construct HTML/RTF/file/bitmap clipboard package → `Clipboard.Flush()` → cleanup folders.
 
-`MainPage.BeginRectangleCaptureAsync` rejects a new capture while `_clipboardPublishInProgress` is true. `ClipboardStackService.PublishAsync` rewrites the entire ordered stack and synchronously flushes the clipboard. This is a code-confirmed source of next-capture blocking, but its duration has not been measured yet. `CaptureSession.AddCapture` also copies the PNG byte span into a new array. The existing model keeps PNG only, so region extraction, raw image storage, and encode timing are owned by Snipping Tool and invisible to SnapStack.
+In the 0.1.0.7 baseline, `MainPage.BeginRectangleCaptureAsync` rejected a new capture while `_clipboardPublishInProgress` was true. `ClipboardStackService.PublishAsync` rewrote the entire ordered stack and flushed the clipboard before accepting another screenshot. The baseline measurements below quantify that blocking. `CaptureSession.AddCapture` also copies the PNG byte span into a new array. The existing model keeps PNG only, so region extraction, raw image storage, and encode timing are owned by Snipping Tool and invisible to SnapStack.
 
 ## API comparison and provisional decision
 
@@ -38,13 +38,26 @@ The persistent concept needs a second benchmark with an actual background frame 
 
 ## Proposed next instrumentation
 
-Record QPC ticks at T0 hotkey dispatch, T1 overlay presentation, T2 selection confirmation, T3 framebuffer access, T4 crop/readback complete, T5 session insertion, T6 clipboard publication, and T7 next capture accepted. Track T2→T7 separately from T2→T6; clipboard work must not gate the next selection. Report median, p90, p95, p99, min and max over at least 100 completed selections, plus allocations, GC and GPU memory. The current prototype is not enough to claim those targets.
+Record QPC ticks at T0 hotkey dispatch, T1 overlay presentation, T2 selection confirmation, T3 framebuffer access, T4 crop/readback complete, T5 session insertion, T6 clipboard publication, and T7 next capture accepted. Track T2→T7 separately from T2→T6; clipboard work must not gate the next selection. Report median, p90, p95, p99, min and max over 20 completed selections per application-level run, plus allocations, GC and GPU memory. The current prototype is not enough to claim those targets.
 
 The current app now has opt-in timing for the stages it owns. Launch a packaged build with `SNAPSTACK_CAPTURE_BENCHMARK=1`, make a session of screenshots, then end or clear the session. It writes `capture-latency.csv` in the app's `ApplicationData.Current.LocalFolder`. Each row records hotkey dispatch, protocol launch, activation, token redemption, file read, session storage, clipboard publication, and when another capture is accepted. Rejected hotkeys are separate rows. Filter to `outcome=captured` before computing latency percentiles. T1 through T4 and the exact mouse-release timestamp cannot be observed through the Snipping Tool protocol; `protocol_to_next_ready_ms` is a lower bound on T2→T7, not an equivalent measurement. The custom capture candidate must expose all T0–T7 timestamps before an end-to-end claim is made.
 
 ### First application-level baseline (14 captures)
 
-The local packaged 0.1.0.7 build recorded 14 completed captures. This is a diagnostic sample, **not** the required 100-capture benchmark. Median / p95 / p99 are 105.40 / 188.61 / 188.61 ms for clipboard publication and 121.08 / 207.09 / 207.09 ms from protocol activation to next-capture readiness. File-read-to-session insertion is 0.06 ms median. The 1.9–6.9 s hotkey-to-protocol times include the person's selection interaction and must not be described as app processing time. The app also rejected one capture hotkey while selection was in progress. In the current code, the clipboard stage directly gates the next screenshot.
+The local packaged 0.1.0.7 build recorded 14 completed captures. This is a diagnostic sample, **not** a controlled 20-capture run. Median / p95 / p99 are 105.40 / 188.61 / 188.61 ms for clipboard publication and 121.08 / 207.09 / 207.09 ms from protocol activation to next-capture readiness. File-read-to-session insertion is 0.06 ms median. The 1.9–6.9 s hotkey-to-protocol times include the person's selection interaction and must not be described as app processing time. The app also rejected one capture hotkey while selection was in progress. In the current code, the clipboard stage directly gates the next screenshot.
+
+### Background clipboard preparation (20 captures)
+
+The user reduced the requested run size to 20 captures per comparison. The packaged 0.1.0.9 candidate was driven through the Capture button using UI Automation and 20 real Snipping Tool selections. It retained all clipboard formats (RTF, HTML, file list, bitmap) and ended with the ordered 20-image session. The trigger is `button`, so the numbers do not establish physical-hotkey latency.
+
+| Stage | Before, n=14 median / p95 / p99 | After, n=20 median / p95 / p99 |
+| --- | --- | --- |
+| Protocol activation → next capture ready | 121.08 / 207.09 / 207.09 ms | **11.79 / 14.30 / 48.79 ms** |
+| File read → session stored | 0.06 / 1.39 / 1.39 ms | 0.03 / 0.10 / 0.76 ms |
+| Session stored → next capture ready | Not recorded | **0.57 / 0.69 / 2.01 ms** |
+| Session enqueue → clipboard ready | 105.40 / 188.61 / 188.61 ms | 177.06 / 279.32 / 280.94 ms, background |
+
+Clipboard publication is still slower as the stack grows because every publication rewrites all PNG files and rebuilds the entire RTF string. The current change removes that work from the next-capture gate and moves file/package preparation off the UI thread. The final WinRT clipboard publication remains on the UI thread as required by its documented focus/threading behavior. A later optimization should cache unchanged PNG files and avoid repeated full-stack disk writes, then remeasure rather than assuming the improvement.
 
 ## References
 

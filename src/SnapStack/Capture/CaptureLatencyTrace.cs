@@ -15,6 +15,7 @@ public sealed class CaptureLatencyTrace
         Environment.GetEnvironmentVariable("SNAPSTACK_CAPTURE_BENCHMARK") == "1";
 
     public Guid Id { get; } = Guid.NewGuid();
+    public string Trigger { get; }
     public long HotkeyDetected { get; }
     public long LaunchRequested { get; set; }
     public long LaunchReturned { get; set; }
@@ -27,13 +28,16 @@ public sealed class CaptureLatencyTrace
     public long NextCaptureReady { get; set; }
     public string Outcome { get; set; } = "unknown";
 
-    private CaptureLatencyTrace(long hotkeyDetected)
+    private CaptureLatencyTrace(long hotkeyDetected, string trigger)
     {
         HotkeyDetected = hotkeyDetected;
+        Trigger = trigger;
     }
 
-    public static CaptureLatencyTrace? Begin(long hotkeyDetected) =>
-        Enabled ? new(hotkeyDetected) : null;
+    public static CaptureLatencyTrace? Begin(
+        long hotkeyDetected,
+        string trigger) =>
+        Enabled ? new(hotkeyDetected, trigger) : null;
 
     public static long Now() => Stopwatch.GetTimestamp();
 
@@ -64,11 +68,13 @@ public sealed class CaptureLatencyTrace
         }
 
         var csv = new StringBuilder();
-        csv.AppendLine("id,outcome,hotkey_to_launch_request_ms,launch_request_to_return_ms,hotkey_to_protocol_ms,protocol_to_token_ms,token_to_file_read_ms,file_read_to_session_ms,session_to_clipboard_start_ms,clipboard_publish_ms,protocol_to_next_ready_ms,hotkey_to_next_ready_ms");
+        csv.AppendLine("id,trigger,outcome,dispatch_to_launch_request_ms,launch_request_to_return_ms,dispatch_to_protocol_ms,protocol_to_token_ms,token_to_file_read_ms,file_read_to_session_ms,session_to_clipboard_start_ms,clipboard_publish_ms,session_to_next_ready_ms,protocol_to_next_ready_ms,dispatch_to_next_ready_ms");
 
         foreach (var trace in snapshot)
         {
-            csv.Append(trace.Id).Append(',').Append(trace.Outcome).Append(',');
+            csv.Append(trace.Id).Append(',')
+                .Append(trace.Trigger).Append(',')
+                .Append(trace.Outcome).Append(',');
             AppendDuration(csv, trace.HotkeyDetected, trace.LaunchRequested);
             AppendDuration(csv, trace.LaunchRequested, trace.LaunchReturned);
             AppendDuration(csv, trace.HotkeyDetected, trace.ProtocolActivated);
@@ -77,6 +83,7 @@ public sealed class CaptureLatencyTrace
             AppendDuration(csv, trace.FileRead, trace.SessionStored);
             AppendDuration(csv, trace.SessionStored, trace.ClipboardStarted);
             AppendDuration(csv, trace.ClipboardStarted, trace.ClipboardReady);
+            AppendDuration(csv, trace.SessionStored, trace.NextCaptureReady);
             AppendDuration(csv, trace.ProtocolActivated, trace.NextCaptureReady);
             AppendDuration(csv, trace.HotkeyDetected, trace.NextCaptureReady, last: true);
         }

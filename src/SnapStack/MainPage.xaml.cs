@@ -12,6 +12,7 @@ public sealed partial class MainPage : Page
 {
     private readonly CaptureSession _session = new();
     private readonly ClipboardStackService _clipboardStackService = new();
+    private readonly ClipboardPublishCoordinator _clipboardPublisher;
     private readonly SequentialPasteService _sequentialPasteService = new();
 
     private SnippingToolCaptureService? _snippingToolCapture;
@@ -22,6 +23,9 @@ public sealed partial class MainPage : Page
     public MainPage()
     {
         InitializeComponent();
+        _clipboardPublisher = new ClipboardPublishCoordinator(
+            _clipboardStackService,
+            DispatcherQueue);
 
         Loaded += MainPage_Loaded;
         Unloaded += MainPage_Unloaded;
@@ -95,14 +99,14 @@ public sealed partial class MainPage : Page
 
     private async void CaptureButton_Click(object sender, RoutedEventArgs e)
     {
-        await BeginRectangleCaptureAsync(CaptureLatencyTrace.Now());
+        await BeginRectangleCaptureAsync(CaptureLatencyTrace.Now(), "button");
     }
 
     private void App_CaptureHotKeyRequested(
         object? sender,
         CaptureHotKeyRequestedEventArgs e)
     {
-        _ = BeginRectangleCaptureAsync(e.DetectedAt);
+        _ = BeginRectangleCaptureAsync(e.DetectedAt, "hotkey");
     }
 
     private void App_EndHotKeyRequested(object? sender, EventArgs e)
@@ -115,13 +119,14 @@ public sealed partial class MainPage : Page
         _ = PasteStackAsync();
     }
 
-    private async Task BeginRectangleCaptureAsync(long detectedAt)
+    private async Task BeginRectangleCaptureAsync(
+        long detectedAt,
+        string trigger)
     {
-        var trace = CaptureLatencyTrace.Begin(detectedAt);
+        var trace = CaptureLatencyTrace.Begin(detectedAt, trigger);
 
         if (!_session.IsActive
             || _snipInProgress
-            || _clipboardPublishInProgress
             || _stackPasteInProgress
             || _snippingToolCapture is null)
         {
@@ -129,7 +134,6 @@ public sealed partial class MainPage : Page
             {
                 trace.Outcome = !_session.IsActive ? "rejected_inactive"
                     : _snipInProgress ? "rejected_selection"
-                    : _clipboardPublishInProgress ? "rejected_clipboard"
                     : _stackPasteInProgress ? "rejected_paste"
                     : "rejected_unavailable";
                 CaptureLatencyTrace.Complete(trace);
@@ -201,25 +205,18 @@ public sealed partial class MainPage : Page
                     trace.SessionStored = CaptureLatencyTrace.Now();
                 }
 
-                FeedbackText.Text =
-                    $"Captured image #{_session.Count}. Updating clipboard...";
-                RenderSession();
-
                 if (trace is not null)
                 {
                     trace.ClipboardStarted = CaptureLatencyTrace.Now();
                 }
 
-                var clipboardError = await PublishStackToClipboardAsync();
-                if (trace is not null)
-                {
-                    trace.ClipboardReady = CaptureLatencyTrace.Now();
-                    trace.Outcome = clipboardError is null ? "captured" : "clipboard_error";
-                }
+                var captureCount = _session.Count;
+                var publication = _clipboardPublisher.Enqueue(_session.Captures);
+                _ = ObserveCapturePublicationAsync(publication, trace, captureCount);
 
-                FeedbackText.Text = clipboardError is null
-                    ? $"Captured image #{_session.Count}. Press Ctrl+Z for another, or Ctrl+X to finish."
-                    : $"Captured image #{_session.Count}, but clipboard update failed: {clipboardError}";
+                FeedbackText.Text =
+                    $"Captured image #{captureCount}. Press Ctrl+Z for another, or Ctrl+X to finish.";
+                if (trace is not null) trace.Outcome = "captured";
             }
             else
             {
@@ -243,6 +240,28 @@ public sealed partial class MainPage : Page
         {
             trace.NextCaptureReady = CaptureLatencyTrace.Now();
             CaptureLatencyTrace.Complete(trace);
+        }
+    }
+
+    private async Task ObserveCapturePublicationAsync(
+        Task<string?> publication,
+        CaptureLatencyTrace? trace,
+        int captureCount)
+    {
+        var error = await publication;
+        if (trace is not null)
+        {
+            trace.ClipboardReady = CaptureLatencyTrace.Now();
+            if (error is not null) trace.Outcome = "clipboard_error";
+        }
+
+        if (error is not null
+            && _session.IsActive
+            && _session.Count == captureCount
+            && !_snipInProgress)
+        {
+            FeedbackText.Text =
+                $"Captured image #{captureCount}, but clipboard update failed: {error}";
         }
     }
 
@@ -347,7 +366,7 @@ public sealed partial class MainPage : Page
 
         // Sequential paste temporarily replaces the clipboard with each image.
         // Restore the full multi-format stack so it remains available later.
-        var restoreError = await PublishStackToClipboardAsync();
+        var restoreError = await PublishStackToClipboardAsync(force: true);
 
         _stackPasteInProgress = false;
 
@@ -365,7 +384,7 @@ public sealed partial class MainPage : Page
         RenderSession();
     }
 
-    private async Task<string?> PublishStackToClipboardAsync()
+    private async Task<string?> PublishStackToClipboardAsync(bool force = false)
     {
         if (_session.Count == 0)
         {
@@ -377,8 +396,7 @@ public sealed partial class MainPage : Page
 
         try
         {
-            await _clipboardStackService.PublishAsync(_session.Captures);
-            return null;
+            return await _clipboardPublisher.Enqueue(_session.Captures, force);
         }
         catch (Exception exception)
         {
