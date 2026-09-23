@@ -1,0 +1,17 @@
+<Project>
+  <!-- The native fast path is experimental, but x64 packages must carry the
+       exact DLL that the managed engine will load when explicitly selected. -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'SnapStack' and '$(Platform)' == 'x64'">
+    <SnapStackNativeCore>$(MSBuildThisFileDirectory)src\SnapStack.Capture.Native\bin\win-x64\SnapStackCaptureNative.dll</SnapStackNativeCore>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'SnapStack' and '$(Platform)' == 'x64'">
+    <Content Include="$(SnapStackNativeCore)" Link="SnapStackCaptureNative.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <Target Name="EnsureSnapStackNativeCore" BeforeTargets="AssignTargetPaths"
+          Condition="'$(MSBuildProjectName)' == 'SnapStack' and '$(Platform)' == 'x64'">
+    <Error Condition="!Exists('$(SnapStackNativeCore)')"
+           Text="Build the x64 native capture core with src/SnapStack.Capture.Native/build.ps1 before building SnapStack." />
+  </Target>
+</Project>

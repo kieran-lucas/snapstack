@@ -49,6 +49,10 @@ jobs:
       - name: Restore
         run: dotnet restore src/SnapStack/SnapStack.csproj -p:Platform=x64
 
+      - name: Build native capture core
+        shell: pwsh
+        run: ./src/SnapStack.Capture.Native/build.ps1
+
       - name: Build signed MSIX
         shell: pwsh
         run: |
@@ -64,6 +68,22 @@ jobs:
             -p:AppxPackageSigningEnabled=true `
             -p:PackageCertificateThumbprint="$env:SNAPSTACK_CERT_THUMBPRINT" `
             -p:AppxPackageDir="$packageDir"
+
+      - name: Verify native core in MSIX
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression
+          $package = Get-ChildItem artifacts/package -Recurse -Filter *.msix | Select-Object -First 1
+          if (-not $package) { throw 'No MSIX was produced.' }
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($package.FullName)
+          try {
+            $native = $archive.Entries | Where-Object FullName -eq 'SnapStackCaptureNative.dll'
+            if (-not $native -or $native.Length -eq 0) {
+              throw 'The x64 native capture core is missing from the MSIX.'
+            }
+            Write-Host "Packaged $($native.FullName) ($($native.Length) bytes)."
+          }
+          finally { $archive.Dispose() }
 
       - name: Remove private signing key
         if: always()

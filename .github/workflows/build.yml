@@ -28,9 +28,6 @@ jobs:
       - name: Restore tests
         run: dotnet restore tests/SnapStack.Tests/SnapStack.Tests.csproj
 
-      - name: Build app
-        run: dotnet build src/SnapStack/SnapStack.csproj --configuration Release -p:Platform=x64 --no-restore
-
       - name: Build native capture prototypes
         shell: pwsh
         run: ./benchmarks/CaptureApiBench/build.ps1
@@ -40,6 +37,9 @@ jobs:
         run: |
           ./src/SnapStack.Capture.Native/build.ps1
           ./src/SnapStack.Capture.Native/probe.ps1
+
+      - name: Build app
+        run: dotnet build src/SnapStack/SnapStack.csproj --configuration Release -p:Platform=x64 --no-restore
 
       - name: Test
         run: dotnet test tests/SnapStack.Tests/SnapStack.Tests.csproj --configuration Release --no-restore
