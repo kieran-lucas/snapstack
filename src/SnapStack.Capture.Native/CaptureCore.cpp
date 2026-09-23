@@ -1,8 +1,11 @@
 #define NOMINMAX
 #include <windows.h>
+#include <windowsx.h>
 #include <d3d11.h>
+#include <dwmapi.h>
 #include <dxgi1_6.h>
 #include <wrl/client.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -12,6 +15,9 @@
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
+#pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "gdi32.lib")
+#pragma comment(lib, "user32.lib")
 
 using Microsoft::WRL::ComPtr;
 
@@ -31,6 +37,17 @@ struct SnapCoreDisplayProbe {
     long status;
 };
 
+struct SnapCoreSelection {
+    unsigned abiVersion;
+    long status;
+    int x;
+    int y;
+    unsigned width;
+    unsigned height;
+    long long overlaySubmittedAt;
+    long long releasedAt;
+};
+
 __declspec(dllexport) unsigned __cdecl SnapCore_GetAbiVersion() noexcept {
     return 1;
 }
@@ -46,6 +63,9 @@ class WarmEngine {
 public:
     explicit WarmEngine(const SnapCoreDisplayProbe& probe)
         : bounds_{probe.left, probe.top, probe.right, probe.bottom} {
+        wchar_t flushFlag[2]{};
+        flushHide_ = GetEnvironmentVariableW(
+            L"SNAPSTACK_CAPTURE_FLUSH_HIDE", flushFlag, 2) > 0;
         ComPtr<IDXGIFactory1> factory;
         auto hr = CreateDXGIFactory1(IID_PPV_ARGS(&factory));
         if (FAILED(hr)) throw hr;
@@ -96,9 +116,60 @@ public:
     }
 
     ~WarmEngine() {
+        if (inputWindow_) PostMessageW(inputWindow_, WM_CLOSE, 0, 0);
+        if (overlayThread_.joinable()) overlayThread_.join();
+        if (selectionEvent_) CloseHandle(selectionEvent_);
+        if (overlayReadyEvent_) CloseHandle(overlayReadyEvent_);
         stop_ = true;
         changed_.notify_all();
         if (worker_.joinable()) worker_.join();
+    }
+
+    HRESULT InitializeOverlay() noexcept {
+        overlayReadyEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        selectionEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (!overlayReadyEvent_ || !selectionEvent_)
+            return HRESULT_FROM_WIN32(GetLastError());
+        try {
+            overlayThread_ = std::thread([this] { RunOverlay(); });
+        } catch (...) {
+            return E_FAIL;
+        }
+        if (WaitForSingleObject(overlayReadyEvent_, 3000) != WAIT_OBJECT_0)
+            return HRESULT_FROM_WIN32(WAIT_TIMEOUT);
+        return overlayStatus_;
+    }
+
+    HRESULT BeginSelection() noexcept {
+        if (selectionActive_.exchange(true)) return HRESULT_FROM_WIN32(ERROR_BUSY);
+        const auto frozen = Freeze(nullptr, nullptr);
+        if (FAILED(frozen)) {
+            selectionActive_ = false;
+            return frozen;
+        }
+        ResetEvent(selectionEvent_);
+        if (!inputWindow_ || !PostMessageW(inputWindow_, WM_APP_START, 0, 0)) {
+            Cancel();
+            selectionActive_ = false;
+            return HRESULT_FROM_WIN32(GetLastError());
+        }
+        return S_OK;
+    }
+
+    HRESULT WaitSelection(unsigned timeoutMs, SnapCoreSelection* output) noexcept {
+        if (!output || output->abiVersion != 1 || !selectionEvent_) return E_INVALIDARG;
+        const auto wait = WaitForSingleObject(selectionEvent_, timeoutMs);
+        if (wait == WAIT_TIMEOUT) return HRESULT_FROM_WIN32(WAIT_TIMEOUT);
+        if (wait != WAIT_OBJECT_0) return HRESULT_FROM_WIN32(GetLastError());
+        std::lock_guard lock(mutex_);
+        *output = selection_;
+        return S_OK;
+    }
+
+    void CancelSelection() noexcept {
+        if (selectionActive_ && inputWindow_) {
+            PostMessageW(inputWindow_, WM_APP_CANCEL, 0, 0);
+        }
     }
 
     HRESULT Freeze(long long* pinnedAt, long long* frameCopiedAt) noexcept {
@@ -174,6 +245,7 @@ public:
             pinned_ = -1;
             paused_ = false;
         }
+        selectionActive_ = false;
         changed_.notify_one();
         return result;
     }
@@ -184,10 +256,14 @@ public:
             pinned_ = -1;
             paused_ = false;
         }
+        selectionActive_ = false;
         changed_.notify_one();
     }
 
 private:
+    static constexpr UINT WM_APP_START = WM_APP + 31;
+    static constexpr UINT WM_APP_CANCEL = WM_APP + 32;
+
     struct Slot {
         ComPtr<ID3D11Texture2D> texture;
         long long copiedAt = 0;
@@ -197,6 +273,185 @@ private:
         LARGE_INTEGER value{};
         QueryPerformanceCounter(&value);
         return value.QuadPart;
+    }
+
+    static LRESULT CALLBACK InputProc(
+        HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) noexcept {
+        if (message == WM_NCCREATE) {
+            const auto created = reinterpret_cast<CREATESTRUCTW*>(lparam);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+                reinterpret_cast<LONG_PTR>(created->lpCreateParams));
+        }
+        auto* engine = reinterpret_cast<WarmEngine*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        if (!engine) return DefWindowProcW(hwnd, message, wparam, lparam);
+        switch (message) {
+        case WM_APP_START:
+            engine->ShowOverlay();
+            return 0;
+        case WM_APP_CANCEL:
+            engine->FinishSelection(1);
+            return 0;
+        case WM_LBUTTONDOWN:
+            engine->dragStart_ = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+            engine->dragEnd_ = engine->dragStart_;
+            engine->dragging_ = true;
+            SetCapture(hwnd);
+            return 0;
+        case WM_MOUSEMOVE:
+            if (engine->dragging_) {
+                engine->dragEnd_ = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+                InvalidateRect(engine->borderWindow_, nullptr, FALSE);
+            }
+            return 0;
+        case WM_LBUTTONUP:
+            if (engine->dragging_) {
+                engine->releasedAt_ = Counter();
+                engine->dragEnd_ = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+                engine->FinishSelection(0);
+            }
+            return 0;
+        case WM_KEYDOWN:
+            if (wparam == VK_ESCAPE) {
+                engine->FinishSelection(1);
+                return 0;
+            }
+            break;
+        case WM_DISPLAYCHANGE:
+        case WM_CANCELMODE:
+            if (engine->selectionActive_) engine->FinishSelection(1);
+            return 0;
+        case WM_CLOSE:
+            if (engine->selectionActive_) engine->FinishSelection(1);
+            PostQuitMessage(0);
+            return 0;
+        }
+        return DefWindowProcW(hwnd, message, wparam, lparam);
+    }
+
+    static LRESULT CALLBACK BorderProc(
+        HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) noexcept {
+        if (message == WM_NCCREATE) {
+            const auto created = reinterpret_cast<CREATESTRUCTW*>(lparam);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+                reinterpret_cast<LONG_PTR>(created->lpCreateParams));
+        }
+        if (message == WM_PAINT) {
+            PAINTSTRUCT ps{};
+            const auto dc = BeginPaint(hwnd, &ps);
+            FillRect(dc, &ps.rcPaint, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+            auto* engine = reinterpret_cast<WarmEngine*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+            if (engine && engine->dragging_) {
+                const auto pen = CreatePen(PS_SOLID, 3, RGB(32, 220, 240));
+                const auto previousPen = SelectObject(dc, pen);
+                const auto previousBrush = SelectObject(dc, GetStockObject(HOLLOW_BRUSH));
+                Rectangle(dc,
+                    std::min(engine->dragStart_.x, engine->dragEnd_.x),
+                    std::min(engine->dragStart_.y, engine->dragEnd_.y),
+                    std::max(engine->dragStart_.x, engine->dragEnd_.x),
+                    std::max(engine->dragStart_.y, engine->dragEnd_.y));
+                SelectObject(dc, previousBrush);
+                SelectObject(dc, previousPen);
+                DeleteObject(pen);
+            }
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        return DefWindowProcW(hwnd, message, wparam, lparam);
+    }
+
+    void RunOverlay() noexcept {
+        const auto instance = GetModuleHandleW(nullptr);
+        WNDCLASSW inputClass{};
+        inputClass.lpfnWndProc = InputProc;
+        inputClass.hInstance = instance;
+        inputClass.lpszClassName = L"SnapStackNativeCaptureInput";
+        inputClass.hCursor = LoadCursor(nullptr, IDC_CROSS);
+        RegisterClassW(&inputClass);
+        WNDCLASSW borderClass = inputClass;
+        borderClass.lpfnWndProc = BorderProc;
+        borderClass.lpszClassName = L"SnapStackNativeCaptureBorder";
+        RegisterClassW(&borderClass);
+        const auto width = bounds_.right - bounds_.left;
+        const auto height = bounds_.bottom - bounds_.top;
+        inputWindow_ = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+            inputClass.lpszClassName, L"", WS_POPUP,
+            bounds_.left, bounds_.top, width, height,
+            nullptr, nullptr, instance, this);
+        borderWindow_ = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOPMOST |
+                WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE,
+            borderClass.lpszClassName, L"", WS_POPUP,
+            bounds_.left, bounds_.top, width, height,
+            nullptr, nullptr, instance, this);
+        if (inputWindow_ && borderWindow_ &&
+            SetLayeredWindowAttributes(inputWindow_, 0, 64, LWA_ALPHA) &&
+            SetLayeredWindowAttributes(borderWindow_, RGB(0, 0, 0), 0, LWA_COLORKEY)) {
+            // Exclusion is a secondary safeguard; the pinned frame predates
+            // both overlay windows becoming visible.
+            SetWindowDisplayAffinity(inputWindow_, WDA_EXCLUDEFROMCAPTURE);
+            SetWindowDisplayAffinity(borderWindow_, WDA_EXCLUDEFROMCAPTURE);
+            overlayStatus_ = S_OK;
+        } else {
+            overlayStatus_ = HRESULT_FROM_WIN32(GetLastError());
+        }
+        SetEvent(overlayReadyEvent_);
+        if (SUCCEEDED(overlayStatus_)) {
+            MSG message{};
+            while (GetMessageW(&message, nullptr, 0, 0) > 0) {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+        }
+        if (borderWindow_) DestroyWindow(borderWindow_);
+        if (inputWindow_) DestroyWindow(inputWindow_);
+        borderWindow_ = inputWindow_ = nullptr;
+    }
+
+    void ShowOverlay() noexcept {
+        dragging_ = false;
+        releasedAt_ = 0;
+        InvalidateRect(borderWindow_, nullptr, FALSE);
+        previousForeground_ = GetForegroundWindow();
+        ShowWindow(inputWindow_, SW_SHOW);
+        ShowWindow(borderWindow_, SW_SHOWNOACTIVATE);
+        SetForegroundWindow(inputWindow_);
+        SetFocus(inputWindow_);
+        UpdateWindow(inputWindow_);
+        UpdateWindow(borderWindow_);
+        // Do not block this input thread on DwmFlush: a fast drag could be
+        // coalesced before WM_LBUTTONDOWN is dispatched. This timestamp is a
+        // show/paint submission, not proof of physical presentation.
+        overlaySubmittedAt_ = Counter();
+    }
+
+    void FinishSelection(long status) noexcept {
+        if (!selectionActive_) return;
+        const auto left = std::clamp(std::min(dragStart_.x, dragEnd_.x),
+            0L, bounds_.right - bounds_.left);
+        const auto top = std::clamp(std::min(dragStart_.y, dragEnd_.y),
+            0L, bounds_.bottom - bounds_.top);
+        const auto right = std::clamp(std::max(dragStart_.x, dragEnd_.x),
+            0L, bounds_.right - bounds_.left);
+        const auto bottom = std::clamp(std::max(dragStart_.y, dragEnd_.y),
+            0L, bounds_.bottom - bounds_.top);
+        dragging_ = false;
+        if (GetCapture() == inputWindow_) ReleaseCapture();
+        ShowWindow(borderWindow_, SW_HIDE);
+        ShowWindow(inputWindow_, SW_HIDE);
+        if (flushHide_) DwmFlush();
+        if (previousForeground_ && IsWindow(previousForeground_))
+            SetForegroundWindow(previousForeground_);
+        if (right <= left || bottom <= top) status = 1;
+        {
+            std::lock_guard lock(mutex_);
+            selection_ = {1, status,
+                static_cast<int>(bounds_.left + left),
+                static_cast<int>(bounds_.top + top),
+                static_cast<unsigned>(right - left),
+                static_cast<unsigned>(bottom - top),
+                overlaySubmittedAt_, releasedAt_};
+        }
+        if (status != 0) Cancel();
+        SetEvent(selectionEvent_);
     }
 
     void Run() noexcept {
@@ -258,13 +513,28 @@ private:
     unsigned stagingWidth_ = 0;
     unsigned stagingHeight_ = 0;
     std::thread worker_;
+    std::thread overlayThread_;
     std::mutex mutex_;
     std::condition_variable changed_;
     std::atomic<bool> stop_{false};
+    std::atomic<bool> selectionActive_{false};
     HRESULT failure_ = S_OK;
     int latest_ = -1;
     int pinned_ = -1;
     bool paused_ = false;
+    HANDLE overlayReadyEvent_ = nullptr;
+    HANDLE selectionEvent_ = nullptr;
+    HWND inputWindow_ = nullptr;
+    HWND borderWindow_ = nullptr;
+    HWND previousForeground_ = nullptr;
+    HRESULT overlayStatus_ = E_FAIL;
+    SnapCoreSelection selection_{1, 1, 0, 0, 0, 0, 0, 0};
+    POINT dragStart_{};
+    POINT dragEnd_{};
+    bool dragging_ = false;
+    bool flushHide_ = false;
+    long long overlaySubmittedAt_ = 0;
+    long long releasedAt_ = 0;
 };
 
 }
@@ -283,6 +553,12 @@ __declspec(dllexport) void* __cdecl SnapCore_Create(long* status) noexcept {
     }
     try {
         auto* engine = new WarmEngine(probe);
+        const auto overlayStatus = engine->InitializeOverlay();
+        if (FAILED(overlayStatus)) {
+            *status = overlayStatus;
+            delete engine;
+            return nullptr;
+        }
         *status = S_OK;
         return engine;
     } catch (HRESULT error) {
@@ -296,6 +572,19 @@ __declspec(dllexport) void* __cdecl SnapCore_Create(long* status) noexcept {
 __declspec(dllexport) long __cdecl SnapCore_Freeze(
     void* handle, long long* pinnedAt, long long* frameCopiedAt) noexcept {
     return handle ? static_cast<WarmEngine*>(handle)->Freeze(pinnedAt, frameCopiedAt) : E_INVALIDARG;
+}
+
+__declspec(dllexport) long __cdecl SnapCore_BeginSelection(void* handle) noexcept {
+    return handle ? static_cast<WarmEngine*>(handle)->BeginSelection() : E_INVALIDARG;
+}
+
+__declspec(dllexport) long __cdecl SnapCore_WaitSelection(
+    void* handle, unsigned timeoutMs, SnapCoreSelection* result) noexcept {
+    return handle ? static_cast<WarmEngine*>(handle)->WaitSelection(timeoutMs, result) : E_INVALIDARG;
+}
+
+__declspec(dllexport) void __cdecl SnapCore_CancelSelection(void* handle) noexcept {
+    if (handle) static_cast<WarmEngine*>(handle)->CancelSelection();
 }
 
 __declspec(dllexport) long __cdecl SnapCore_Crop(

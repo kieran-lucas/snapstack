@@ -1,7 +1,8 @@
 param(
     [ValidateSet('x64', 'ARM64')]
     [string]$Architecture = 'x64',
-    [switch]$ExerciseCapture
+    [switch]$ExerciseCapture,
+    [switch]$ExerciseOverlay
 )
 
 $ErrorActionPreference = 'Stop'
@@ -20,6 +21,18 @@ public struct SnapCoreDisplayProbe {
     public uint Rotation;
     public uint ColorSpace;
     public int Status;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct SnapCoreSelection {
+    public uint AbiVersion;
+    public int Status;
+    public int X;
+    public int Y;
+    public uint Width;
+    public uint Height;
+    public long OverlaySubmittedAt;
+    public long ReleasedAt;
 }
 
 [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -43,6 +56,13 @@ public delegate void SnapCoreCancelFunction(IntPtr handle);
 
 [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
 public delegate void SnapCoreDestroyFunction(IntPtr handle);
+
+[UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+public delegate int SnapCoreBeginSelectionFunction(IntPtr handle);
+
+[UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+public delegate int SnapCoreWaitSelectionFunction(IntPtr handle, uint timeoutMs,
+    ref SnapCoreSelection selection);
 '@
 
 $runtime = if ($Architecture -eq 'ARM64') { 'win-arm64' } else { 'win-x64' }
@@ -68,7 +88,7 @@ try {
         throw 'The native probe return value disagrees with its output structure.'
     }
 
-    if ($ExerciseCapture) {
+    if ($ExerciseCapture -or $ExerciseOverlay) {
         if ($result -ne 0) { throw 'This display is not eligible for the native capture exercise.' }
         $create = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer(
             [System.Runtime.InteropServices.NativeLibrary]::GetExport($handle, 'SnapCore_Create'),
@@ -90,27 +110,76 @@ try {
         if ($engine -eq [IntPtr]::Zero -or $status -ne 0) {
             throw "Native engine creation failed: $status"
         }
-        $byteCount = 800 * 500 * 4
+        $byteCount = 900 * 600 * 4
         $pixels = [System.Runtime.InteropServices.Marshal]::AllocHGlobal($byteCount)
         try {
             $releaseToPixels = [System.Collections.Generic.List[double]]::new()
+            if ($ExerciseOverlay) {
+                $begin = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer(
+                    [System.Runtime.InteropServices.NativeLibrary]::GetExport($handle, 'SnapCore_BeginSelection'),
+                    [SnapCoreBeginSelectionFunction])
+                $waitSelection = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer(
+                    [System.Runtime.InteropServices.NativeLibrary]::GetExport($handle, 'SnapCore_WaitSelection'),
+                    [SnapCoreWaitSelectionFunction])
+                $showMs = [System.Collections.Generic.List[double]]::new()
+                $widths = [System.Collections.Generic.List[int]]::new()
+                $heights = [System.Collections.Generic.List[int]]::new()
+            }
             for ($index = 0; $index -lt 20; $index++) {
-                $pinnedAt = [long]0
-                $copiedAt = [long]0
                 $submittedAt = [long]0
                 $pixelsAt = [long]0
-                $status = $freeze.Invoke($engine, [ref]$pinnedAt, [ref]$copiedAt)
-                if ($status -ne 0) { throw "Freeze $index failed: $status" }
-                $startedAt = [System.Diagnostics.Stopwatch]::GetTimestamp()
-                $status = $crop.Invoke($engine, 600, 400, 800, 500,
+                if ($ExerciseOverlay) {
+                    $startedAt = [System.Diagnostics.Stopwatch]::GetTimestamp()
+                    $status = $begin.Invoke($engine)
+                    if ($status -ne 0) { throw "Begin selection $index failed: $status" }
+                    $selection = [SnapCoreSelection]::new()
+                    $selection.AbiVersion = 1
+                    $status = $waitSelection.Invoke($engine, 15000, [ref]$selection)
+                    if ($status -ne 0 -or $selection.Status -ne 0) {
+                        throw "Selection $index failed: wait=$status result=$($selection.Status)"
+                    }
+                    if ($selection.Width -lt 780 -or $selection.Width -gt 820 -or
+                        $selection.Height -lt 480 -or $selection.Height -gt 520) {
+                        throw "Selection $index was $($selection.Width)x$($selection.Height), outside the 800x500 test tolerance."
+                    }
+                    $widths.Add([int]$selection.Width)
+                    $heights.Add([int]$selection.Height)
+                    $showMs.Add((($selection.OverlaySubmittedAt - $startedAt) * 1000.0 /
+                        [System.Diagnostics.Stopwatch]::Frequency))
+                    $startedAt = $selection.ReleasedAt
+                    $x = $selection.X
+                    $y = $selection.Y
+                    $width = $selection.Width
+                    $height = $selection.Height
+                } else {
+                    $pinnedAt = [long]0
+                    $copiedAt = [long]0
+                    $status = $freeze.Invoke($engine, [ref]$pinnedAt, [ref]$copiedAt)
+                    if ($status -ne 0) { throw "Freeze $index failed: $status" }
+                    $startedAt = [System.Diagnostics.Stopwatch]::GetTimestamp()
+                    $x = 600
+                    $y = 400
+                    $width = 800
+                    $height = 500
+                }
+                $status = $crop.Invoke($engine, $x, $y, $width, $height,
                     $pixels, [UIntPtr]::new([uint64]$byteCount),
                     [ref]$submittedAt, [ref]$pixelsAt)
                 if ($status -ne 0) { throw "Crop $index failed: $status" }
                 $releaseToPixels.Add(
                     (($pixelsAt - $startedAt) * 1000.0 / [System.Diagnostics.Stopwatch]::Frequency))
+                if ($ExerciseOverlay) { Start-Sleep -Milliseconds 250 }
             }
             $releaseToPixels.Sort()
-            Write-Host ("Native core crop/readback: n=20 median={0:N2} ms p95={1:N2} ms p99={2:N2} ms" -f
+            if ($ExerciseOverlay) {
+                $showMs.Sort()
+                Write-Host ("Native core begin -> overlay submit: n=20 median={0:N2} ms p95={1:N2} ms p99={2:N2} ms" -f
+                    $showMs[9], $showMs[18], $showMs[19])
+                $widths.Sort()
+                $heights.Sort()
+                Write-Host "Selection dimensions: width $($widths[0])–$($widths[19]), height $($heights[0])–$($heights[19])"
+            }
+            Write-Host ("Native core release -> pixels: n=20 median={0:N2} ms p95={1:N2} ms p99={2:N2} ms" -f
                 $releaseToPixels[9], $releaseToPixels[18], $releaseToPixels[19])
             Write-Host "First BGRA byte: $([System.Runtime.InteropServices.Marshal]::ReadByte($pixels))"
         }

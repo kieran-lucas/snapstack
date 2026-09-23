@@ -83,6 +83,10 @@ A separate 20-selection run placed a green 16 × 16 Win32 marker inside the sele
 
 The DLL now also owns a persistent duplication worker, three GPU frame textures, a frozen-slot pin, and a reusable staging texture. Its `Create`/`Freeze`/`Crop`/`Cancel`/`Destroy` ABI returns caller-owned BGRA memory rather than allocating a PNG on the critical path. A 20-crop local ABI exercise on an 800 × 500 region measured crop/readback median **0.48 ms**, p95 **1.63 ms**, p99 **11.52 ms**; this is not an interactive capture result. The engine pauses worker copies while a frame is pinned. It is still experimental and not yet packaged or wired into the WinUI selection flow.
 
+The native core now has a pre-created two-window selection overlay on a dedicated message thread, plus `BeginSelection`/`WaitSelection` APIs. Its first show implementation called `DwmFlush` on the input thread; an injected drag could begin while that thread was blocked and lose the true mouse-down coordinate. The core now records overlay **submission** without blocking input; physical presentation needs an independent ETW/visual measurement.
+
+An A/B 20-selection run on the same single SDR output and nominal 800 × 500 region measured mouse release → BGRA pixels at **24.36 / 34.85 / 44.25 ms** median / p95 / p99 when flushing the compositor after hiding the overlay, versus **6.20 / 14.71 / 28.92 ms** without the flush. All 20/20 selections in each run completed, and their actual dimensions were exactly 800 × 500. The no-flush path is retained for the candidate because a synchronous compositor wait needlessly gates readback; rapid-repeat contamination and freshness still need targeted validation. Begin → overlay submission was 6.48 / 8.88 / 12.05 ms with hide flush and 7.25 / 9.06 / 21.17 ms without, which does **not** establish hotkey → visually presented overlay.
+
 ## References
 
 - [Microsoft: Snipping Tool protocol and callback requirements](https://learn.microsoft.com/en-us/windows/apps/develop/launch/launch-snipping-tool)

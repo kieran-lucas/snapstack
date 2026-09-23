@@ -1,6 +1,8 @@
 param(
     [switch]$PauseWorker,
-    [switch]$VerifyFrozen
+    [switch]$VerifyFrozen,
+    [switch]$NativeCore,
+    [switch]$FlushHide
 )
 
 $ErrorActionPreference = 'Stop'
@@ -19,19 +21,32 @@ public static class SnapStackOverlayBenchmarkInput {
 }
 '@
 
-$executable = Join-Path $PSScriptRoot 'bin\CaptureApiBench.exe'
+$executable = if ($NativeCore) {
+    Join-Path $PSHOME 'pwsh.exe'
+} else {
+    Join-Path $PSScriptRoot 'bin\CaptureApiBench.exe'
+}
 if (-not (Test-Path -LiteralPath $executable)) {
     throw 'Build the benchmark with build.ps1 first.'
 }
 
 $artifactDirectory = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'artifacts'
 New-Item -ItemType Directory -Force -Path $artifactDirectory | Out-Null
-$variant = if ($VerifyFrozen) { 'verify' } elseif ($PauseWorker) { 'pause' } else { 'continuous' }
+$variant = if ($NativeCore -and $FlushHide) { 'native-core-flush' } elseif ($NativeCore) { 'native-core' } elseif ($VerifyFrozen) { 'verify' } elseif ($PauseWorker) { 'pause' } else { 'continuous' }
 $output = Join-Path $artifactDirectory "overlay-benchmark-$variant.txt"
 $errors = Join-Path $artifactDirectory "overlay-benchmark-errors-$variant.txt"
-$argument = if ($VerifyFrozen) { '--overlay-verify' } elseif ($PauseWorker) { '--overlay-pause' } else { '--overlay' }
+$argument = if ($NativeCore) {
+    $probe = Join-Path $PSScriptRoot '..\..\src\SnapStack.Capture.Native\probe.ps1'
+    "-NoProfile -File `"$probe`" -ExerciseOverlay"
+} elseif ($VerifyFrozen) { '--overlay-verify' } elseif ($PauseWorker) { '--overlay-pause' } else { '--overlay' }
+$windowClass = if ($NativeCore) { 'SnapStackNativeCaptureInput' } else { 'SnapStackOverlayBenchInput' }
+$previousFlush = $env:SNAPSTACK_CAPTURE_FLUSH_HIDE
+if ($FlushHide) { $env:SNAPSTACK_CAPTURE_FLUSH_HIDE = '1' }
+else { Remove-Item Env:SNAPSTACK_CAPTURE_FLUSH_HIDE -ErrorAction SilentlyContinue }
 $process = Start-Process -FilePath $executable -ArgumentList $argument `
     -WindowStyle Hidden -PassThru -RedirectStandardOutput $output -RedirectStandardError $errors
+if ($null -eq $previousFlush) { Remove-Item Env:SNAPSTACK_CAPTURE_FLUSH_HIDE -ErrorAction SilentlyContinue }
+else { $env:SNAPSTACK_CAPTURE_FLUSH_HIDE = $previousFlush }
 
 try {
     for ($index = 1; $index -le 20; $index++) {
@@ -41,7 +56,7 @@ try {
                 throw "Overlay benchmark exited early at selection $index."
             }
             $overlay = [SnapStackOverlayBenchmarkInput]::FindWindow(
-                'SnapStackOverlayBenchInput', $null)
+                $windowClass, $null)
             if ($overlay -ne [IntPtr]::Zero -and
                 [SnapStackOverlayBenchmarkInput]::IsWindowVisible($overlay)) {
                 break
@@ -52,6 +67,9 @@ try {
             Start-Sleep -Milliseconds 10
         } while ($true)
 
+        # Match a real user's reaction interval and let the overlay thread
+        # complete its first paint before sending the mouse-down event.
+        Start-Sleep -Milliseconds 50
         [SnapStackOverlayBenchmarkInput]::SetCursorPos(600, 400) | Out-Null
         Start-Sleep -Milliseconds 20
         [SnapStackOverlayBenchmarkInput]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
