@@ -121,8 +121,6 @@ public:
     ~WarmEngine() {
         if (inputWindow_) PostMessageW(inputWindow_, WM_CLOSE, 0, 0);
         if (overlayThread_.joinable()) overlayThread_.join();
-        if (selectionPen_) DeleteObject(selectionPen_);
-        if (dimBrush_) DeleteObject(dimBrush_);
         if (selectionEvent_) CloseHandle(selectionEvent_);
         if (overlayReadyEvent_) CloseHandle(overlayReadyEvent_);
         stop_ = true;
@@ -268,6 +266,8 @@ public:
 private:
     static constexpr UINT WM_APP_START = WM_APP + 31;
     static constexpr UINT WM_APP_CANCEL = WM_APP + 32;
+    static constexpr DWORD kDimPixel = 0x9602070E; // Premultiplied BGRA: RGB(4, 12, 24), alpha 150.
+    static constexpr DWORD kBorderPixel = 0xFF408BFF; // Opaque RGB(64, 139, 255).
 
     struct Slot {
         ComPtr<ID3D11Texture2D> texture;
@@ -304,8 +304,11 @@ private:
             return 0;
         case WM_MOUSEMOVE:
             if (engine->dragging_) {
-                engine->dragEnd_ = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-                InvalidateRect(engine->borderWindow_, nullptr, FALSE);
+                const POINT next{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+                if (next.x != engine->dragEnd_.x || next.y != engine->dragEnd_.y) {
+                    engine->dragEnd_ = next;
+                    if (!engine->RenderOverlay()) engine->FinishSelection(2);
+                }
             }
             return 0;
         case WM_LBUTTONUP:
@@ -333,40 +336,48 @@ private:
         return DefWindowProcW(hwnd, message, wparam, lparam);
     }
 
-    static LRESULT CALLBACK BorderProc(
-        HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) noexcept {
-        if (message == WM_NCCREATE) {
-            const auto created = reinterpret_cast<CREATESTRUCTW*>(lparam);
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA,
-                reinterpret_cast<LONG_PTR>(created->lpCreateParams));
-        }
-        if (message == WM_PAINT) {
-            PAINTSTRUCT ps{};
-            const auto dc = BeginPaint(hwnd, &ps);
-            auto* engine = reinterpret_cast<WarmEngine*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-            if (engine && engine->dimBrush_) {
-                FillRect(dc, &ps.rcPaint, engine->dimBrush_);
+    bool RenderOverlay() noexcept {
+        const auto width = bounds_.right - bounds_.left;
+        const auto height = bounds_.bottom - bounds_.top;
+        if (!overlayPixels_ || !overlayDc_) return false;
+
+        if (previousSelection_.right > previousSelection_.left &&
+            previousSelection_.bottom > previousSelection_.top) {
+            for (auto y = previousSelection_.top; y < previousSelection_.bottom; ++y) {
+                auto* row = overlayPixels_ + static_cast<size_t>(y) * width;
+                std::fill(row + previousSelection_.left,
+                    row + previousSelection_.right, kDimPixel);
             }
-            if (engine && engine->dragging_) {
-                const RECT selected{
-                    std::min(engine->dragStart_.x, engine->dragEnd_.x),
-                    std::min(engine->dragStart_.y, engine->dragEnd_.y),
-                    std::max(engine->dragStart_.x, engine->dragEnd_.x),
-                    std::max(engine->dragStart_.y, engine->dragEnd_.y)};
-                // Black is the layer's color key. The selected pixels are
-                // fully transparent while everything around them is dimmed.
-                FillRect(dc, &selected, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
-                const auto previousPen = SelectObject(dc, engine->selectionPen_);
-                const auto previousBrush = SelectObject(dc, GetStockObject(HOLLOW_BRUSH));
-                Rectangle(dc,
-                    selected.left, selected.top, selected.right, selected.bottom);
-                SelectObject(dc, previousBrush);
-                SelectObject(dc, previousPen);
-            }
-            EndPaint(hwnd, &ps);
-            return 0;
         }
-        return DefWindowProcW(hwnd, message, wparam, lparam);
+        previousSelection_ = {};
+
+        if (dragging_) {
+            const RECT selected{
+                std::clamp(std::min(dragStart_.x, dragEnd_.x), 0L, width),
+                std::clamp(std::min(dragStart_.y, dragEnd_.y), 0L, height),
+                std::clamp(std::max(dragStart_.x, dragEnd_.x), 0L, width),
+                std::clamp(std::max(dragStart_.y, dragEnd_.y), 0L, height)};
+            if (selected.right > selected.left && selected.bottom > selected.top) {
+                for (auto y = selected.top; y < selected.bottom; ++y) {
+                    auto* row = overlayPixels_ + static_cast<size_t>(y) * width;
+                    std::fill(row + selected.left, row + selected.right,
+                        (y < selected.top + 3 || y >= selected.bottom - 3) ? kBorderPixel : 0);
+                    if (y >= selected.top + 3 && y < selected.bottom - 3) {
+                        std::fill(row + selected.left,
+                            row + std::min(selected.left + 3, selected.right), kBorderPixel);
+                        std::fill(row + std::max(selected.right - 3, selected.left),
+                            row + selected.right, kBorderPixel);
+                    }
+                }
+                previousSelection_ = selected;
+            }
+        }
+
+        SIZE size{width, height};
+        POINT origin{0, 0};
+        BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+        return UpdateLayeredWindow(borderWindow_, nullptr, nullptr, &size,
+            overlayDc_, &origin, 0, &blend, ULW_ALPHA) != FALSE;
     }
 
     void RunOverlay() noexcept {
@@ -378,7 +389,7 @@ private:
         inputClass.hCursor = LoadCursor(nullptr, IDC_CROSS);
         RegisterClassW(&inputClass);
         WNDCLASSW borderClass = inputClass;
-        borderClass.lpfnWndProc = BorderProc;
+        borderClass.lpfnWndProc = DefWindowProcW;
         borderClass.lpszClassName = L"SnapStackNativeCaptureBorder";
         RegisterClassW(&borderClass);
         const auto width = bounds_.right - bounds_.left;
@@ -392,12 +403,26 @@ private:
             borderClass.lpszClassName, L"", WS_POPUP,
             bounds_.left, bounds_.top, width, height,
             nullptr, nullptr, instance, this);
-        if (inputWindow_ && borderWindow_ &&
-            (dimBrush_ = CreateSolidBrush(RGB(4, 12, 24))) &&
-            (selectionPen_ = CreatePen(PS_SOLID, 3, RGB(64, 139, 255))) &&
+        BITMAPINFO bitmapInfo{};
+        bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bitmapInfo.bmiHeader.biWidth = width;
+        bitmapInfo.bmiHeader.biHeight = -height;
+        bitmapInfo.bmiHeader.biPlanes = 1;
+        bitmapInfo.bmiHeader.biBitCount = 32;
+        bitmapInfo.bmiHeader.biCompression = BI_RGB;
+        if (inputWindow_ && borderWindow_) {
+            overlayDc_ = CreateCompatibleDC(nullptr);
+            overlayBitmap_ = CreateDIBSection(overlayDc_, &bitmapInfo,
+                DIB_RGB_COLORS, reinterpret_cast<void**>(&overlayPixels_), nullptr, 0);
+            if (overlayDc_ && overlayBitmap_)
+                previousBitmap_ = SelectObject(overlayDc_, overlayBitmap_);
+            if (previousBitmap_ && overlayPixels_)
+                std::fill_n(overlayPixels_, static_cast<size_t>(width) * height,
+                    kDimPixel);
+        }
+        if (previousBitmap_ && overlayPixels_ &&
             SetLayeredWindowAttributes(inputWindow_, 0, 1, LWA_ALPHA) &&
-            SetLayeredWindowAttributes(borderWindow_, RGB(0, 0, 0), 150,
-                LWA_COLORKEY | LWA_ALPHA)) {
+            RenderOverlay()) {
             // Exclusion is a secondary safeguard; the pinned frame predates
             // both overlay windows becoming visible. The visual-check switch
             // is for the benchmark harness to photograph the overlay only.
@@ -423,19 +448,29 @@ private:
         if (borderWindow_) DestroyWindow(borderWindow_);
         if (inputWindow_) DestroyWindow(inputWindow_);
         borderWindow_ = inputWindow_ = nullptr;
+        if (previousBitmap_) SelectObject(overlayDc_, previousBitmap_);
+        if (overlayBitmap_) DeleteObject(overlayBitmap_);
+        if (overlayDc_) DeleteDC(overlayDc_);
+        overlayBitmap_ = nullptr;
+        overlayDc_ = nullptr;
+        overlayPixels_ = nullptr;
     }
 
     void ShowOverlay() noexcept {
         dragging_ = false;
         releasedAt_ = 0;
-        InvalidateRect(borderWindow_, nullptr, FALSE);
+        // Replace the cached layered-window image while it is still hidden.
+        // The next ShowWindow can then never reveal the previous selection.
+        if (!RenderOverlay()) {
+            FinishSelection(2);
+            return;
+        }
         previousForeground_ = GetForegroundWindow();
         ShowWindow(inputWindow_, SW_SHOW);
         ShowWindow(borderWindow_, SW_SHOWNOACTIVATE);
         SetForegroundWindow(inputWindow_);
         SetFocus(inputWindow_);
         UpdateWindow(inputWindow_);
-        UpdateWindow(borderWindow_);
         // Do not block this input thread on DwmFlush: a fast drag could be
         // coalesced before WM_LBUTTONDOWN is dispatched. This timestamp is a
         // show/paint submission, not proof of physical presentation.
@@ -546,8 +581,11 @@ private:
     HWND inputWindow_ = nullptr;
     HWND borderWindow_ = nullptr;
     HWND previousForeground_ = nullptr;
-    HBRUSH dimBrush_ = nullptr;
-    HPEN selectionPen_ = nullptr;
+    HDC overlayDc_ = nullptr;
+    HBITMAP overlayBitmap_ = nullptr;
+    HGDIOBJ previousBitmap_ = nullptr;
+    DWORD* overlayPixels_ = nullptr;
+    RECT previousSelection_{};
     HRESULT overlayStatus_ = E_FAIL;
     SnapCoreSelection selection_{1, 1, 0, 0, 0, 0, 0, 0};
     POINT dragStart_{};

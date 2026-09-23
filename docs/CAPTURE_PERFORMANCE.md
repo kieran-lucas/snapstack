@@ -99,6 +99,10 @@ The overlay now paints a dim layer outside the active rectangle, keeps the chose
 
 The packaged 0.1.0.15 app was then tested with 20 selections at 800 × 500. All 20 clipboard PNGs decoded at the expected dimensions; file, HTML, RTF, and bitmap clipboard formats were present. Mouse release → next Capture button enabled was **30.91 / 36.97 / 39.36 ms** median / p95 / p99, versus **773.96 / 793.94 / 812.22 ms** for Snipping Tool. Native QPC release → session was **8.56 / 16.73 / 21.15 ms**, and release → next-ready was **9.31 / 17.65 / 25.09 ms**. The native primitive p95 variation therefore did not manifest as an app-level regression in this run. The 20-image test session was cleared after measurement; the test clipboard remained available.
 
+Version 0.1.0.16 replaces the selection overlay's incremental GDI painting with one atomic `UpdateLayeredWindow` presentation per pointer position. It clears the cached rectangle before showing the next overlay. Two 20-selection native runs completed with exact 800 × 500 dimensions, including the normal capture-exclusion path; the visual-check run showed a clear active selection and no previous rectangle in the first sampled frame of the next opening. This verifies the observed test frames, though it cannot prove every compositor frame on every display is flicker-free.
+
+The installed 0.1.0.16 MSIX then completed 20/20 app captures. Its 20 clipboard PNGs all decoded at 800 × 500. Mouse release → the next enabled Capture button was **31.18 / 37.74 / 47.78 ms** median / p95 / p99; the internal trace measured release → session **8.48 / 11.30 / 22.41 ms** and release → next-ready **9.24 / 11.81 / 25.26 ms**. The automated test session was cleared afterward.
+
 ## References
 
 - [Microsoft: Snipping Tool protocol and callback requirements](https://learn.microsoft.com/en-us/windows/apps/develop/launch/launch-snipping-tool)

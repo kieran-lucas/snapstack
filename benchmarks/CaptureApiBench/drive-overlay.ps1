@@ -7,6 +7,20 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+function Save-OverlaySample([string]$path) {
+    Add-Type -AssemblyName System.Drawing
+    $sample = [System.Drawing.Bitmap]::new(1100, 850)
+    $graphics = [System.Drawing.Graphics]::FromImage($sample)
+    try {
+        $graphics.CopyFromScreen(400, 300, 0, 0,
+            [System.Drawing.Size]::new(1100, 850))
+        $sample.Save($path)
+    }
+    finally {
+        $graphics.Dispose()
+        $sample.Dispose()
+    }
+}
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
@@ -72,6 +86,10 @@ try {
             Start-Sleep -Milliseconds 10
         } while ($true)
 
+        if ($SaveVisualSample -and $index -eq 2) {
+            Save-OverlaySample (Join-Path $artifactDirectory 'overlay-next-open.png')
+        }
+
         # Match a real user's reaction interval and let the overlay thread
         # complete its first paint before sending the mouse-down event.
         Start-Sleep -Milliseconds 50
@@ -83,18 +101,7 @@ try {
                 (600 + $step * 80), (400 + $step * 50)) | Out-Null
             Start-Sleep -Milliseconds 10
             if ($SaveVisualSample -and $index -eq 1 -and $step -eq 5) {
-                Add-Type -AssemblyName System.Drawing
-                $sample = [System.Drawing.Bitmap]::new(1100, 850)
-                $graphics = [System.Drawing.Graphics]::FromImage($sample)
-                try {
-                    $graphics.CopyFromScreen(400, 300, 0, 0,
-                        [System.Drawing.Size]::new(1100, 850))
-                    $sample.Save((Join-Path $artifactDirectory 'overlay-visual-sample.png'))
-                }
-                finally {
-                    $graphics.Dispose()
-                    $sample.Dispose()
-                }
+                Save-OverlaySample (Join-Path $artifactDirectory 'overlay-visual-sample.png')
             }
         }
         [SnapStackOverlayBenchmarkInput]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)

@@ -168,6 +168,8 @@ public sealed class NativeDxgiCaptureEngine : ICaptureEngine, IDisposable
             trace.OverlaySubmitted = selection.OverlaySubmittedAt;
             trace.MouseReleased = selection.ReleasedAt;
         }
+        if (selection.Status > 1)
+            return CaptureEngineResult.Failed("Capture overlay could not be updated.", trace);
         if (selection.Status != 0 || selection.Width == 0 || selection.Height == 0)
             return CaptureEngineResult.Cancelled(trace);
 

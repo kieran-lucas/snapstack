@@ -18,4 +18,6 @@ The interactive native contender runs with `bin\CaptureApiBench.exe --overlay` a
 
 For the separate native DLL's overlay path, build `src/SnapStack.Capture.Native/build.ps1` and run `drive-overlay.ps1 -NativeCore`. Use `-FlushHide` for the compositor-flush A/B variant. This harness starts the overlay through the C ABI, waits for its selection result, calls the C ABI crop, and reports QPC release-to-pixels. Its `begin -> overlay submit` metric stops after showing/painting the windows; it does not prove the frame is physically visible. The harness waits 50 ms after a visible window is detected before injecting mouse-down, to avoid racing the overlay's initial paint. The selected region must remain within 780–820 × 480–520 pixels, and actual dimensions are reported.
 
+Use `drive-overlay.ps1 -NativeCore -SaveVisualSample` to save a sample while dragging and another immediately after the next overlay opens. The second image helps catch a stale selection rectangle from the previous capture.
+
 Run `src/SnapStack.Capture.Native/probe.ps1 -ExerciseEncoding` for a 20-crop / 20-WIC-PNG-encode primitive run. It decodes the first PNG with Windows' bitmap decoder to validate dimensions, first pixel, and alpha. It does not run the Snipping Tool, session, or clipboard path.
