@@ -77,6 +77,10 @@ The pinned-texture design was A/B tested with the live DXGI worker either contin
 
 A separate 20-selection run placed a green 16 × 16 Win32 marker inside the selected region before frame pinning, changed the live marker to magenta after the overlay appeared, and checked a pixel in each BGRA readback. **20/20** retained the pre-overlay green pixel. This validates ownership against a changing desktop pixel on the tested single-output SDR setup; it does not establish whole-image correctness or exclude all possible overlay artifacts. The marker mode flushes the compositor during selection and is not used for latency comparisons.
 
+### Native core integration boundary
+
+`src/SnapStack.Capture.Native` now builds a native DLL with a versioned C ABI. Its first exported display probe conservatively accepts only one attached, unrotated SDR output with working DXGI duplication; this development machine reports one 2560 × 1600 output, identity rotation, SDR color space, and status 0. Multiple outputs, rotation, HDR, and unavailable duplication remain on the existing Snipping Tool path until the native engine implements and validates those cases. The DLL is **not yet loaded or packaged by SnapStack**; the Build workflow compiles it and exercises ABI loading. This boundary keeps COM pointers and GPU ownership inside native code rather than exposing them across managed interop.
+
 ## References
 
 - [Microsoft: Snipping Tool protocol and callback requirements](https://learn.microsoft.com/en-us/windows/apps/develop/launch/launch-snipping-tool)

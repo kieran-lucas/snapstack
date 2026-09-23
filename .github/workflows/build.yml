@@ -35,5 +35,11 @@ jobs:
         shell: pwsh
         run: ./benchmarks/CaptureApiBench/build.ps1
 
+      - name: Build and load native capture core
+        shell: pwsh
+        run: |
+          ./src/SnapStack.Capture.Native/build.ps1
+          ./src/SnapStack.Capture.Native/probe.ps1
+
       - name: Test
         run: dotnet test tests/SnapStack.Tests/SnapStack.Tests.csproj --configuration Release --no-restore
