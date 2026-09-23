@@ -56,7 +56,8 @@ jobs:
       - name: Build signed MSIX
         shell: pwsh
         run: |
-          $packageDir = Join-Path $env:GITHUB_WORKSPACE "artifacts\package"
+          # MSIX tooling concatenates this value with its output folder name.
+          $packageDir = (Join-Path $env:GITHUB_WORKSPACE "artifacts\package") + '\'
 
           dotnet build src/SnapStack/SnapStack.csproj `
             --configuration Release `
