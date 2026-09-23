@@ -1,0 +1,13 @@
+# Capture API benchmark
+
+Run on an interactive Windows 11 desktop with Visual Studio C++ Build Tools and the Windows SDK:
+
+```powershell
+.\benchmarks\CaptureApiBench\build.ps1 -Run
+```
+
+The harness creates a 16 × 16 pixel window near the lower-right corner of the primary monitor and changes its color before each sample. It warms each contender for five iterations, then uses QPC to report min, median, p90, p95, p99, and max from 100 samples of an 800 × 500 BGRA region. It uses the same D3D11 device and monitor for DXGI Desktop Duplication and Windows.Graphics.Capture. The GDI contender uses a warm DIB section. The DXGI warm-snapshot measurement reuses a frame copied to a persistent GPU texture, without waiting for a new desktop frame.
+
+`wait for new frame` includes the display/compositor update and frame delivery. `GPU crop / BitBlt issue` records the time to submit a GPU copy, or the complete synchronous GDI BitBlt. `CPU readback / DIB` includes the GPU synchronization caused by mapping a staging texture and copying every row into a reused CPU buffer; it is not pure CPU work. `total` is the elapsed wall time of the complete operation. The warm-snapshot result is a capture-primitive measurement, not hotkey-to-clipboard latency.
+
+The benchmark does not automate the Snipping Tool picker, measure overlay presentation, encode PNG, publish the clipboard, or verify multi-monitor rotation/HDR. Those require separate application-level instrumentation and correctness checks before replacing the production capture path. Results from one machine should not be assumed to hold on another GPU or refresh rate.
