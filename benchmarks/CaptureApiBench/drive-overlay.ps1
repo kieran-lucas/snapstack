@@ -1,3 +1,5 @@
+param([switch]$PauseWorker)
+
 $ErrorActionPreference = 'Stop'
 Add-Type @'
 using System;
@@ -21,9 +23,11 @@ if (-not (Test-Path -LiteralPath $executable)) {
 
 $artifactDirectory = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'artifacts'
 New-Item -ItemType Directory -Force -Path $artifactDirectory | Out-Null
-$output = Join-Path $artifactDirectory 'overlay-benchmark.txt'
-$errors = Join-Path $artifactDirectory 'overlay-benchmark-errors.txt'
-$process = Start-Process -FilePath $executable -ArgumentList '--overlay' `
+$variant = if ($PauseWorker) { 'pause' } else { 'continuous' }
+$output = Join-Path $artifactDirectory "overlay-benchmark-$variant.txt"
+$errors = Join-Path $artifactDirectory "overlay-benchmark-errors-$variant.txt"
+$argument = if ($PauseWorker) { '--overlay-pause' } else { '--overlay' }
+$process = Start-Process -FilePath $executable -ArgumentList $argument `
     -WindowStyle Hidden -PassThru -RedirectStandardOutput $output -RedirectStandardError $errors
 
 try {
@@ -46,6 +50,7 @@ try {
         } while ($true)
 
         [SnapStackOverlayBenchmarkInput]::SetCursorPos(600, 400) | Out-Null
+        Start-Sleep -Milliseconds 20
         [SnapStackOverlayBenchmarkInput]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
         for ($step = 1; $step -le 10; $step++) {
             [SnapStackOverlayBenchmarkInput]::SetCursorPos(

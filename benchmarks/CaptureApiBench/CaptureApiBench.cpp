@@ -386,7 +386,8 @@ void benchmarkWgc(Graphics& graphics, Stimulus& stimulus) {
 // until the crop finishes, including while overlay frames continue arriving.
 class WarmDuplication {
 public:
-    explicit WarmDuplication(Graphics& graphics) : graphics_(graphics) {
+    explicit WarmDuplication(Graphics& graphics, bool pauseOnPin)
+        : graphics_(graphics), pauseOnPin_(pauseOnPin) {
         check(graphics_.output->DuplicateOutput(graphics_.device.get(), duplication_.put()),
             "DuplicateOutput for overlay contender");
         const auto width = static_cast<UINT>(graphics_.bounds.right - graphics_.bounds.left);
@@ -397,6 +398,7 @@ public:
 
     ~WarmDuplication() {
         stop_ = true;
+        resume_.notify_all();
         if (worker_.joinable()) worker_.join();
     }
 
@@ -407,6 +409,7 @@ public:
                 if (failure_) std::rethrow_exception(failure_);
                 if (latest_ >= 0) {
                     pinned_ = latest_;
+                    paused_ = pauseOnPin_;
                     return pinned_;
                 }
             }
@@ -422,8 +425,12 @@ public:
     }
 
     void unpin() {
-        std::lock_guard lock(mutex_);
-        pinned_ = -1;
+        {
+            std::lock_guard lock(mutex_);
+            pinned_ = -1;
+            paused_ = false;
+        }
+        resume_.notify_one();
     }
 
     double pinnedAgeMs() {
@@ -440,6 +447,11 @@ private:
     void run() {
         try {
             while (!stop_) {
+                {
+                    std::unique_lock lock(mutex_);
+                    resume_.wait(lock, [this] { return stop_ || !paused_; });
+                }
+                if (stop_) break;
                 DXGI_OUTDUPL_FRAME_INFO info{};
                 com_ptr<IDXGIResource> resource;
                 const auto hr = duplication_->AcquireNextFrame(16, &info, resource.put());
@@ -449,12 +461,14 @@ private:
                     com_ptr<ID3D11Texture2D> source;
                     resource.as(source);
                     std::lock_guard lock(mutex_);
-                    int next = (latest_ + 1) % 3;
-                    if (next == pinned_) next = (next + 1) % 3;
-                    graphics_.context->CopyResource(slots_[next].texture.get(), source.get());
-                    graphics_.context->Flush();
-                    slots_[next].copiedAt = stamp();
-                    latest_ = next;
+                    if (!paused_) {
+                        int next = (latest_ + 1) % 3;
+                        if (next == pinned_) next = (next + 1) % 3;
+                        graphics_.context->CopyResource(slots_[next].texture.get(), source.get());
+                        graphics_.context->Flush();
+                        slots_[next].copiedAt = stamp();
+                        latest_ = next;
+                    }
                 } catch (...) {
                     duplication_->ReleaseFrame();
                     throw;
@@ -472,8 +486,11 @@ private:
     com_ptr<IDXGIOutputDuplication> duplication_;
     Slot slots_[3];
     std::mutex mutex_;
+    std::condition_variable resume_;
     std::thread worker_;
     std::atomic<bool> stop_{false};
+    bool pauseOnPin_ = false;
+    bool paused_ = false;
     std::exception_ptr failure_;
     int latest_ = -1;
     int pinned_ = -1;
@@ -646,10 +663,10 @@ private:
     HWND previousForeground_{};
 };
 
-void benchmarkOverlay(Graphics& graphics, Stimulus& stimulus) {
-    printf("Interactive overlay contender: 20 selections, exactly %ux%u pixels each.\n",
-        kCropWidth, kCropHeight);
-    WarmDuplication frames(graphics);
+void benchmarkOverlay(Graphics& graphics, Stimulus& stimulus, bool pauseWorker) {
+    printf("Interactive overlay contender: 20 selections, exactly %ux%u pixels each; worker %s.\n",
+        kCropWidth, kCropHeight, pauseWorker ? "paused during selection" : "continuous");
+    WarmDuplication frames(graphics, pauseWorker);
     Overlay overlay(graphics.bounds);
     Cropper cropper(graphics, kCropWidth, kCropHeight);
     stimulus.update();
@@ -701,8 +718,9 @@ int main(int argc, char** argv) {
         printf("Primary output adapter: %ls\n", graphics.adapterName.c_str());
         printf("Reported display refresh: %lu Hz\n", graphics.refreshHz);
         Stimulus stimulus(graphics.bounds);
-        if (argc > 1 && strcmp(argv[1], "--overlay") == 0) {
-            benchmarkOverlay(graphics, stimulus);
+        if (argc > 1 &&
+            (strcmp(argv[1], "--overlay") == 0 || strcmp(argv[1], "--overlay-pause") == 0)) {
+            benchmarkOverlay(graphics, stimulus, strcmp(argv[1], "--overlay-pause") == 0);
             return 0;
         }
         benchmarkGdi(graphics, stimulus);

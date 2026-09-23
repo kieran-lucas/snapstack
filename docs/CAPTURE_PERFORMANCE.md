@@ -69,6 +69,10 @@ The first custom contender has a persistent `AcquireNextFrame` worker, three app
 
 This is an experimental native benchmark, **not** the full application path. It has not yet proven PNG/session/clipboard readiness, all-monitor geometry, HDR color, recovery, cancellation correctness, or long-run resource stability. Its release-to-pixels figure must not be presented as release-to-next-capture-ready. The production default remains Snipping Tool until those gates pass.
 
+### Pause worker while a selection owns a frame
+
+The pinned-texture design was A/B tested with the live DXGI worker either continuing to copy desktop frames or waiting until the selection releases its pin. Two 20-selection runs were made for each mode using the same 800 × 500 geometry. Mouse-release → BGRA-pixels median / p95: continuous **7.66 / 17.15 ms** and **5.85 / 24.80 ms**; paused **6.36 / 9.97 ms** and **5.60 / 10.09 ms**. Overlay-presentation medians stayed near 13 ms in both modes. The median advantage is not robust across runs, but the tail improvement is consistent, so the candidate engine should pause the frame worker during selection. The next-capture path must ensure a fresh non-overlay frame after resuming, particularly under rapid repeated captures.
+
 ## References
 
 - [Microsoft: Snipping Tool protocol and callback requirements](https://learn.microsoft.com/en-us/windows/apps/develop/launch/launch-snipping-tool)
