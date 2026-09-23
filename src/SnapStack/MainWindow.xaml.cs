@@ -181,7 +181,7 @@ public sealed partial class MainWindow : Window
         switch (e.Id)
         {
             case CaptureHotKeyId:
-                app.RaiseCaptureHotKeyRequested();
+                app.RaiseCaptureHotKeyRequested(Capture.CaptureLatencyTrace.Now());
                 break;
 
             case EndHotKeyId:

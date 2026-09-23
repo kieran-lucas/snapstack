@@ -95,12 +95,14 @@ public sealed partial class MainPage : Page
 
     private async void CaptureButton_Click(object sender, RoutedEventArgs e)
     {
-        await BeginRectangleCaptureAsync();
+        await BeginRectangleCaptureAsync(CaptureLatencyTrace.Now());
     }
 
-    private void App_CaptureHotKeyRequested(object? sender, EventArgs e)
+    private void App_CaptureHotKeyRequested(
+        object? sender,
+        CaptureHotKeyRequestedEventArgs e)
     {
-        _ = BeginRectangleCaptureAsync();
+        _ = BeginRectangleCaptureAsync(e.DetectedAt);
     }
 
     private void App_EndHotKeyRequested(object? sender, EventArgs e)
@@ -113,14 +115,26 @@ public sealed partial class MainPage : Page
         _ = PasteStackAsync();
     }
 
-    private async Task BeginRectangleCaptureAsync()
+    private async Task BeginRectangleCaptureAsync(long detectedAt)
     {
+        var trace = CaptureLatencyTrace.Begin(detectedAt);
+
         if (!_session.IsActive
             || _snipInProgress
             || _clipboardPublishInProgress
             || _stackPasteInProgress
             || _snippingToolCapture is null)
         {
+            if (trace is not null)
+            {
+                trace.Outcome = !_session.IsActive ? "rejected_inactive"
+                    : _snipInProgress ? "rejected_selection"
+                    : _clipboardPublishInProgress ? "rejected_clipboard"
+                    : _stackPasteInProgress ? "rejected_paste"
+                    : "rejected_unavailable";
+                CaptureLatencyTrace.Complete(trace);
+            }
+
             return;
         }
 
@@ -130,11 +144,17 @@ public sealed partial class MainPage : Page
 
         try
         {
-            var launched = await _snippingToolCapture.LaunchRectangleCaptureAsync();
+            var launched = await _snippingToolCapture.LaunchRectangleCaptureAsync(trace);
 
             if (!launched)
             {
                 _snipInProgress = false;
+                if (trace is not null)
+                {
+                    trace.Outcome = "launch_failed";
+                    trace.NextCaptureReady = CaptureLatencyTrace.Now();
+                    CaptureLatencyTrace.Complete(trace);
+                }
                 FeedbackText.Text = "Could not launch Snipping Tool.";
                 RenderSession();
             }
@@ -142,6 +162,12 @@ public sealed partial class MainPage : Page
         catch (Exception exception)
         {
             _snipInProgress = false;
+            if (trace is not null)
+            {
+                trace.Outcome = "launch_error";
+                trace.NextCaptureReady = CaptureLatencyTrace.Now();
+                CaptureLatencyTrace.Complete(trace);
+            }
             FeedbackText.Text = $"Capture failed: {exception.Message}";
             RenderSession();
         }
@@ -158,6 +184,7 @@ public sealed partial class MainPage : Page
     private async Task HandleSnippingCaptureCompletedAsync(
         SnippingCaptureResult result)
     {
+        var trace = result.LatencyTrace;
         _snipInProgress = false;
 
         if (result.Capture is not null)
@@ -169,11 +196,26 @@ public sealed partial class MainPage : Page
                     result.Capture.PixelWidth,
                     result.Capture.PixelHeight);
 
+                if (trace is not null)
+                {
+                    trace.SessionStored = CaptureLatencyTrace.Now();
+                }
+
                 FeedbackText.Text =
                     $"Captured image #{_session.Count}. Updating clipboard...";
                 RenderSession();
 
+                if (trace is not null)
+                {
+                    trace.ClipboardStarted = CaptureLatencyTrace.Now();
+                }
+
                 var clipboardError = await PublishStackToClipboardAsync();
+                if (trace is not null)
+                {
+                    trace.ClipboardReady = CaptureLatencyTrace.Now();
+                    trace.Outcome = clipboardError is null ? "captured" : "clipboard_error";
+                }
 
                 FeedbackText.Text = clipboardError is null
                     ? $"Captured image #{_session.Count}. Press Ctrl+Z for another, or Ctrl+X to finish."
@@ -182,18 +224,26 @@ public sealed partial class MainPage : Page
             else
             {
                 FeedbackText.Text = "Capture received after the session ended.";
+                if (trace is not null) trace.Outcome = "late_callback";
             }
         }
         else if (result.IsCancelled)
         {
             FeedbackText.Text = "Capture cancelled.";
+            if (trace is not null) trace.Outcome = "cancelled";
         }
         else
         {
             FeedbackText.Text = $"Capture failed: {result.ErrorMessage}";
+            if (trace is not null) trace.Outcome = "capture_error";
         }
 
         RenderSession();
+        if (trace is not null)
+        {
+            trace.NextCaptureReady = CaptureLatencyTrace.Now();
+            CaptureLatencyTrace.Complete(trace);
+        }
     }
 
     private async void StopButton_Click(object sender, RoutedEventArgs e)
@@ -222,6 +272,7 @@ public sealed partial class MainPage : Page
             app.SetPasteHotKeyEnabled(false, out _);
             FeedbackText.Text = "Session stopped with no captures.";
             RenderSession();
+            _ = CaptureLatencyTrace.ExportAsync();
             return;
         }
 
@@ -241,6 +292,7 @@ public sealed partial class MainPage : Page
             : $"Session stopped, but clipboard update failed: {clipboardError}";
 
         RenderSession();
+        _ = CaptureLatencyTrace.ExportAsync();
     }
 
     private void ClearButton_Click(object sender, RoutedEventArgs e)
@@ -253,6 +305,7 @@ public sealed partial class MainPage : Page
         _session.Clear();
         FeedbackText.Text = "Session cleared.";
         RenderSession();
+        _ = CaptureLatencyTrace.ExportAsync();
     }
 
     private async Task PasteStackAsync()

@@ -40,6 +40,12 @@ The persistent concept needs a second benchmark with an actual background frame 
 
 Record QPC ticks at T0 hotkey dispatch, T1 overlay presentation, T2 selection confirmation, T3 framebuffer access, T4 crop/readback complete, T5 session insertion, T6 clipboard publication, and T7 next capture accepted. Track T2→T7 separately from T2→T6; clipboard work must not gate the next selection. Report median, p90, p95, p99, min and max over at least 100 completed selections, plus allocations, GC and GPU memory. The current prototype is not enough to claim those targets.
 
+The current app now has opt-in timing for the stages it owns. Launch a packaged build with `SNAPSTACK_CAPTURE_BENCHMARK=1`, make a session of screenshots, then end or clear the session. It writes `capture-latency.csv` in the app's `ApplicationData.Current.LocalFolder`. Each row records hotkey dispatch, protocol launch, activation, token redemption, file read, session storage, clipboard publication, and when another capture is accepted. Rejected hotkeys are separate rows. Filter to `outcome=captured` before computing latency percentiles. T1 through T4 and the exact mouse-release timestamp cannot be observed through the Snipping Tool protocol; `protocol_to_next_ready_ms` is a lower bound on T2→T7, not an equivalent measurement. The custom capture candidate must expose all T0–T7 timestamps before an end-to-end claim is made.
+
+### First application-level baseline (14 captures)
+
+The local packaged 0.1.0.7 build recorded 14 completed captures. This is a diagnostic sample, **not** the required 100-capture benchmark. Median / p95 / p99 are 105.40 / 188.61 / 188.61 ms for clipboard publication and 121.08 / 207.09 / 207.09 ms from protocol activation to next-capture readiness. File-read-to-session insertion is 0.06 ms median. The 1.9–6.9 s hotkey-to-protocol times include the person's selection interaction and must not be described as app processing time. The app also rejected one capture hotkey while selection was in progress. In the current code, the clipboard stage directly gates the next screenshot.
+
 ## References
 
 - [Microsoft: Snipping Tool protocol and callback requirements](https://learn.microsoft.com/en-us/windows/apps/develop/launch/launch-snipping-tool)

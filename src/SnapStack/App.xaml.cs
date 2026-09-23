@@ -13,7 +13,7 @@ public partial class App : Application
 
     public SnippingToolCaptureService SnippingToolCapture { get; } = new();
 
-    public event EventHandler? CaptureHotKeyRequested;
+    public event EventHandler<CaptureHotKeyRequestedEventArgs>? CaptureHotKeyRequested;
     public event EventHandler? EndHotKeyRequested;
     public event EventHandler? PasteHotKeyRequested;
 
@@ -66,9 +66,9 @@ public partial class App : Application
         return window.SetEndHotKeyEnabled(enabled, out error);
     }
 
-    internal void RaiseCaptureHotKeyRequested()
+    internal void RaiseCaptureHotKeyRequested(long detectedAt)
     {
-        CaptureHotKeyRequested?.Invoke(this, EventArgs.Empty);
+        CaptureHotKeyRequested?.Invoke(this, new CaptureHotKeyRequestedEventArgs(detectedAt));
     }
 
     internal void RaiseEndHotKeyRequested()
@@ -131,3 +131,5 @@ public partial class App : Application
         }
     }
 }
+
+public sealed record CaptureHotKeyRequestedEventArgs(long DetectedAt);

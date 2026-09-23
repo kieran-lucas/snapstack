@@ -13,12 +13,13 @@ public sealed class SnippingToolCaptureService
     private const string CallbackHost = "capture-response";
 
     private string? _pendingCorrelationId;
+    private CaptureLatencyTrace? _pendingTrace;
 
     public event EventHandler<SnippingCaptureResult>? CaptureCompleted;
 
     public bool IsCapturePending => _pendingCorrelationId is not null;
 
-    public async Task<bool> LaunchRectangleCaptureAsync()
+    public async Task<bool> LaunchRectangleCaptureAsync(CaptureLatencyTrace? trace = null)
     {
         if (IsCapturePending)
         {
@@ -27,6 +28,7 @@ public sealed class SnippingToolCaptureService
 
         var correlationId = Guid.NewGuid().ToString();
         _pendingCorrelationId = correlationId;
+        _pendingTrace = trace;
 
         var uri = new Uri(
             "ms-screenclip://capture/image"
@@ -37,11 +39,32 @@ public sealed class SnippingToolCaptureService
             + "&redirect-uri=snapstack://capture-response"
             + "&x-request-correlation-id=" + correlationId);
 
-        var launched = await Launcher.LaunchUriAsync(uri);
+        if (trace is not null)
+        {
+            trace.LaunchRequested = CaptureLatencyTrace.Now();
+        }
+
+        bool launched;
+        try
+        {
+            launched = await Launcher.LaunchUriAsync(uri);
+        }
+        catch
+        {
+            _pendingCorrelationId = null;
+            _pendingTrace = null;
+            throw;
+        }
+
+        if (trace is not null)
+        {
+            trace.LaunchReturned = CaptureLatencyTrace.Now();
+        }
 
         if (!launched)
         {
             _pendingCorrelationId = null;
+            _pendingTrace = null;
         }
 
         return launched;
@@ -54,6 +77,8 @@ public sealed class SnippingToolCaptureService
         {
             return false;
         }
+
+        var activatedAt = CaptureLatencyTrace.Now();
 
         var query = new WwwFormUrlDecoder(uri.Query);
         var code = GetQueryValue(query, "code");
@@ -69,11 +94,18 @@ public sealed class SnippingToolCaptureService
             return false;
         }
 
+        var trace = _pendingTrace;
+        if (trace is not null)
+        {
+            trace.ProtocolActivated = activatedAt;
+        }
+
         _pendingCorrelationId = null;
+        _pendingTrace = null;
 
         if (code == "499")
         {
-            CaptureCompleted?.Invoke(this, SnippingCaptureResult.Cancelled());
+            CaptureCompleted?.Invoke(this, SnippingCaptureResult.Cancelled(trace));
             return true;
         }
 
@@ -84,7 +116,8 @@ public sealed class SnippingToolCaptureService
                 SnippingCaptureResult.Failed(
                     string.IsNullOrWhiteSpace(reason)
                         ? $"Snipping Tool returned status {code ?? "unknown"}."
-                        : reason));
+                        : reason,
+                    trace));
 
             return true;
         }
@@ -95,7 +128,8 @@ public sealed class SnippingToolCaptureService
             CaptureCompleted?.Invoke(
                 this,
                 SnippingCaptureResult.Failed(
-                    "Snipping Tool returned success without a file access token."));
+                    "Snipping Tool returned success without a file access token.",
+                    trace));
 
             return true;
         }
@@ -103,17 +137,26 @@ public sealed class SnippingToolCaptureService
         try
         {
             var file = await SharedStorageAccessManager.RedeemTokenForFileAsync(token);
+            if (trace is not null)
+            {
+                trace.TokenRedeemed = CaptureLatencyTrace.Now();
+            }
+
             var payload = await ReadCaptureAsync(file);
+            if (trace is not null)
+            {
+                trace.FileRead = CaptureLatencyTrace.Now();
+            }
 
             CaptureCompleted?.Invoke(
                 this,
-                SnippingCaptureResult.Success(payload));
+                SnippingCaptureResult.Success(payload, trace));
         }
         catch (Exception exception)
         {
             CaptureCompleted?.Invoke(
                 this,
-                SnippingCaptureResult.Failed(exception.Message));
+                SnippingCaptureResult.Failed(exception.Message, trace));
         }
 
         return true;
