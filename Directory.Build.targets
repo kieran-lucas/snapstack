@@ -1,4 +1,11 @@
 <Project>
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'SnapStack'">
+    <Content Include="$(MSBuildThisFileDirectory)src\SnapStack\Assets\SnapStack.ico"
+             Link="Assets\SnapStack.ico"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- The native fast path is experimental, but x64 packages must carry the
        exact DLL that the managed engine will load when explicitly selected. -->
   <PropertyGroup Condition="'$(MSBuildProjectName)' == 'SnapStack' and '$(Platform)' == 'x64'">

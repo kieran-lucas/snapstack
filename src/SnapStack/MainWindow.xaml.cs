@@ -78,6 +78,8 @@ public sealed partial class MainWindow : Window
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
         var appWindow = AppWindow.GetFromWindowId(windowId);
+        appWindow.SetIcon(Path.Combine(
+            AppContext.BaseDirectory, "Assets", "SnapStack.ico"));
 
         var displayArea = DisplayArea.GetFromWindowId(
             windowId,
@@ -110,6 +112,7 @@ public sealed partial class MainWindow : Window
         }
 
         var titleBar = appWindow.TitleBar;
+        titleBar.IconShowOptions = IconShowOptions.HideIconAndSystemMenu;
 
         var background = Color.FromArgb(255, 7, 17, 31);
         var inactiveBackground = Color.FromArgb(255, 9, 22, 38);

@@ -3,6 +3,6 @@
     x:Class="SnapStack.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="SnapStack">
+    Title="">
     <Frame x:Name="RootFrame" />
 </Window>

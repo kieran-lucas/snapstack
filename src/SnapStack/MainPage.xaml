@@ -47,27 +47,12 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <!-- Brand bar -->
+                <!-- Session readiness indicator -->
                 <Grid Grid.Row="0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-
-                    <StackPanel Orientation="Horizontal" Spacing="12">
-                        <Border
-                            Width="46"
-                            Height="46"
-                            Padding="5"
-                            Background="#EAF4FFFF"
-                            CornerRadius="14">
-                            <Image Source="ms-appx:///Assets/SnapStackLogo.png" Stretch="Uniform" />
-                        </Border>
-                        <StackPanel VerticalAlignment="Center" Spacing="1">
-                            <TextBlock Style="{StaticResource HeadingTextStyle}" Text="SnapStack" />
-                            <TextBlock Style="{StaticResource CaptionTextStyle}" Text="SCREENSHOT FLOW" />
-                        </StackPanel>
-                    </StackPanel>
 
                     <Border
                         Grid.Column="1"
