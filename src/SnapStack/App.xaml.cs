@@ -13,7 +13,9 @@ public partial class App : Application
 
     public SnippingToolCaptureService SnippingToolCapture { get; } = new();
 
-    public ICaptureEngine CaptureEngine => SnippingToolCapture;
+    private ICaptureEngine? _captureEngine;
+
+    public ICaptureEngine CaptureEngine => _captureEngine ??= CreateCaptureEngine();
 
     public event EventHandler<CaptureHotKeyRequestedEventArgs>? CaptureHotKeyRequested;
     public event EventHandler? EndHotKeyRequested;
@@ -91,7 +93,23 @@ public partial class App : Application
         }
 
         MainWindowInstance = new MainWindow();
+        MainWindowInstance.Closed += (_, _) => (_captureEngine as IDisposable)?.Dispose();
         MainWindowInstance.Activate();
+    }
+
+    private ICaptureEngine CreateCaptureEngine()
+    {
+        var selected = Environment.GetEnvironmentVariable("SNAPSTACK_CAPTURE_ENGINE");
+        if (!string.Equals(selected, "snipping", StringComparison.OrdinalIgnoreCase))
+        {
+            var native = NativeDxgiCaptureEngine.TryCreate();
+            if (native is not null)
+            {
+                return new FallbackCaptureEngine(native, SnippingToolCapture);
+            }
+        }
+
+        return SnippingToolCapture;
     }
 
     private void SubscribeToActivation()

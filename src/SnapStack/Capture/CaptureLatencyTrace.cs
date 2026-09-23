@@ -22,6 +22,10 @@ public sealed class CaptureLatencyTrace
     public long ProtocolActivated { get; set; }
     public long TokenRedeemed { get; set; }
     public long FileRead { get; set; }
+    public long OverlaySubmitted { get; set; }
+    public long MouseReleased { get; set; }
+    public long CropSubmitted { get; set; }
+    public long PixelsReady { get; set; }
     public long SessionStored { get; set; }
     public long ClipboardStarted { get; set; }
     public long ClipboardReady { get; set; }
@@ -68,7 +72,7 @@ public sealed class CaptureLatencyTrace
         }
 
         var csv = new StringBuilder();
-        csv.AppendLine("id,trigger,outcome,dispatch_to_launch_request_ms,launch_request_to_return_ms,dispatch_to_protocol_ms,protocol_to_token_ms,token_to_file_read_ms,file_read_to_session_ms,session_to_clipboard_start_ms,clipboard_publish_ms,session_to_next_ready_ms,protocol_to_next_ready_ms,dispatch_to_next_ready_ms");
+        csv.AppendLine("id,trigger,outcome,dispatch_to_launch_request_ms,launch_request_to_return_ms,dispatch_to_protocol_ms,protocol_to_token_ms,token_to_file_read_ms,file_read_to_session_ms,session_to_clipboard_start_ms,clipboard_publish_ms,session_to_next_ready_ms,protocol_to_next_ready_ms,dispatch_to_next_ready_ms,dispatch_to_overlay_submit_ms,release_to_crop_submit_ms,crop_submit_to_pixels_ms,release_to_session_ms,release_to_next_ready_ms");
 
         foreach (var trace in snapshot)
         {
@@ -85,7 +89,12 @@ public sealed class CaptureLatencyTrace
             AppendDuration(csv, trace.ClipboardStarted, trace.ClipboardReady);
             AppendDuration(csv, trace.SessionStored, trace.NextCaptureReady);
             AppendDuration(csv, trace.ProtocolActivated, trace.NextCaptureReady);
-            AppendDuration(csv, trace.HotkeyDetected, trace.NextCaptureReady, last: true);
+            AppendDuration(csv, trace.HotkeyDetected, trace.NextCaptureReady);
+            AppendDuration(csv, trace.HotkeyDetected, trace.OverlaySubmitted);
+            AppendDuration(csv, trace.MouseReleased, trace.CropSubmitted);
+            AppendDuration(csv, trace.CropSubmitted, trace.PixelsReady);
+            AppendDuration(csv, trace.MouseReleased, trace.SessionStored);
+            AppendDuration(csv, trace.MouseReleased, trace.NextCaptureReady, last: true);
         }
 
         var path = Path.Combine(

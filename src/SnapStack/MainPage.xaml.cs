@@ -195,10 +195,20 @@ public sealed partial class MainPage : Page
         {
             if (_session.IsActive)
             {
-                _session.AddCapture(
-                    result.Capture.PngBytes.Span,
-                    result.Capture.PixelWidth,
-                    result.Capture.PixelHeight);
+                if (result.Capture.DeferredPng is { } pendingPng)
+                {
+                    _session.AddDeferredCapture(
+                        pendingPng,
+                        result.Capture.PixelWidth,
+                        result.Capture.PixelHeight);
+                }
+                else
+                {
+                    _session.AddCapture(
+                        result.Capture.PngBytes.Span,
+                        result.Capture.PixelWidth,
+                        result.Capture.PixelHeight);
+                }
 
                 if (trace is not null)
                 {
